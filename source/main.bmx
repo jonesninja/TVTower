@@ -42,12 +42,17 @@ Import "Dig/base.gfx.gui.window.modal.bmx"
 Import "Dig/base.gfx.gui.window.modalchain.bmx"
 Import "Dig/base.framework.tooltip.bmx"
 
+'actually load the sound implementation (not the stub base class)
+Import "Dig/base.sfx.soundmanager.bmx"
+
 
 Import "basefunctions_network.bmx"
 Import "basefunctions.bmx"
 Import "common.misc.screen.bmx"
 Import "common.misc.dialogue.bmx"
 'Import "common.misc.gamegui.bmx"
+
+Import "game.menu.settings.bmx"
 
 'game specific
 Import "game.world.bmx"
@@ -103,8 +108,9 @@ Import "game.gamescriptexpression.bmx"
 Import "game.screen.menu.bmx"
 
 Import "game.network.networkhelper.bmx"
+Import "game.misc.savegameserializers.bmx"
 
-
+?not bmxng
 'notify users when there are XML-errors
 Function TVTXmlErrorCallback(data:Object, error:TxmlError)
 	local result:string = "XML-Error~n"
@@ -116,6 +122,7 @@ Function TVTXmlErrorCallback(data:Object, error:TxmlError)
 	TLogger.Log("XML-Error", "File:  "+ error.getFileName()+". Line:"+error.getLine()+" Column:"+error.getColumn(), LOG_ERROR)
 End Function
 xmlSetErrorFunction(TVTXmlErrorCallback, null)
+?
 
 '===== Includes =====
 
@@ -127,7 +134,7 @@ Include "gamefunctions_rooms.bmx"				'basic roomtypes with handling
 Include "gamefunctions_sound.bmx"				'TVTower spezifische Sounddefinitionen
 Include "gamefunctions_debug.bmx"
 
-Include "game.escapemenu.bmx"
+Include "game.menu.escapemenu.bmx"
 
 
 '===== Globals =====
@@ -177,6 +184,8 @@ Type TApp
 	'store listener for music loaded in "startup"
 	Field OnLoadMusicListener:TLink
 
+	Field settingsWindow:TSettingsWindow
+
 	'bitmask defining what elements set the game to paused (eg. escape
 	'menu, ingame help ...)
 	Field pausedBy:int = 0
@@ -216,8 +225,10 @@ Type TApp
 		obj.creationTime = Time.MillisecsLong()
 
 		If initializeGUI Then
-			'register to quit confirmation dialogue
-			EventManager.registerListenerFunction( "guiModalWindow.onClose", onAppConfirmExit )
+			'register to:
+			'- quit confirmation dialogue
+			'- handle saving/applying of settings
+			EventManager.registerListenerFunction( "guiModalWindow.onClose", onCloseModalDialogue )
 			EventManager.registerListenerFunction( "guiModalWindowChain.onClose", onCloseEscapeMenu )
 			EventManager.registerListenerFunction( "RegistryLoader.onLoadXmlFromFinished",	TApp.onLoadXmlFromFinished )
 			obj.OnLoadMusicListener = EventManager.registerListenerFunction( "RegistryLoader.onLoadResource",	TApp.onLoadMusicResource )
@@ -353,6 +364,41 @@ Type TApp
 	End Method
 
 
+	Method CreateSettingsWindow()
+		'load config
+		LoadSettings()
+
+		if settingsWindow then settingsWindow.Remove()
+		settingsWindow = New TSettingsWindow.Init() '.Create(New TVec2D(), New TVec2D.Init(520,45), "SYSTEM")
+		'fill values
+		settingsWindow.SetGuiValues(App.config)
+
+	End Method
+
+
+	Method ApplySettingsWindow:Int()
+		'append values stored in gui elements
+		ApplyConfigToSettings( settingsWindow.ReadGuiValues() )
+	End Method
+
+
+	Method ApplyConfigToSettings(newConfig:TData)
+		Local mixedConfig:TData = App.config.copy()
+		'append values stored in gui elements
+		mixedConfig.Append(newConfig)
+
+		SaveSettings(mixedConfig)
+		'save the new config as current config
+		config = mixedConfig
+		'and "reinit" settings
+		ApplySettings()
+
+		'=== GAME SETTINGS ===
+		if not GetGame().PlayingAGame()
+			GetGame().SetStartYear( config.GetInt("startyear", 0) )
+		EndIf
+	End Method
+
 
 	Method LoadSettings:Int()
 		Local storage:TDataXmlStorage = New TDataXmlStorage
@@ -422,17 +468,32 @@ Type TApp
 		endif
 		if adjusted and doInitGraphics then GetGraphicsManager().InitGraphics()
 
+
 		GameRules.InRoomTimeSlowDownMod = config.GetInt("inroomslowdown", 100) / 100.0
 
 		GetDeltatimer().SetRenderRate(config.GetInt("fps", -1))
 
 		adjusted = False
 
-		TSoundManager.SetAudioEngine(config.GetString("sound_engine", "AUTOMATIC"))
-		TSoundManager.GetInstance().MuteMusic(Not config.GetBool("sound_music", True))
-		TSoundManager.GetInstance().MuteSfx(Not config.GetBool("sound_effects", True))
 
-		if not TSoundManager.GetInstance().HasMutedMusic()
+
+		if config.GetString("sound_engine").ToLower() = "none"
+			TSoundManager.audioEngineEnabled = False
+			GetSoundManager()
+			TSoundManager.audioEngineEnabled = True
+			GetSoundManager().MuteMusic(true)
+			GetSoundManager().MuteSfx(true)
+			TSoundManager.audioEngineEnabled = False
+		Else
+			GetSoundManagerBase().ApplyConfig(config.GetString("sound_engine", "AUTOMATIC"), ..
+			                                  0.01 * config.GetInt("sound_music_volume", 100), ..
+			                                  0.01 * config.GetInt("sound_sfx_volume", 100) ..
+			                                 )
+		EndIf
+		GetSoundManager().MuteMusic(config.GetInt("sound_music_volume", 100) = 0)
+		GetSoundManager().MuteSfx(config.GetInt("sound_sfx_volume", 100) = 0)
+
+		if not GetSoundManager().HasMutedMusic()
 			'if no music is played yet, try to get one from the "menu"-playlist
 			If Not GetSoundManager().isPlaying()
 				GetSoundManager().PlayMusicPlaylist("menu")
@@ -608,11 +669,11 @@ Type TApp
 				'CTRL+M: (un)mute all music
 				If KEYMANAGER.IsHit(KEY_M)
 					If KEYMANAGER.IsDown(KEY_LSHIFT) Or KEYMANAGER.IsDown(KEY_RSHIFT)
-						TSoundManager.GetInstance().MuteSfx(Not TSoundManager.GetInstance().HasMutedSfx())
+						GetSoundManager().MuteSfx(Not GetSoundManager().HasMutedSfx())
 					ElseIf KEYMANAGER.IsDown(KEY_LCONTROL) Or KEYMANAGER.IsDown(KEY_RCONTROL)
-						TSoundManager.GetInstance().MuteMusic(Not TSoundManager.GetInstance().HasMutedMusic())
+						GetSoundManager().MuteMusic(Not GetSoundManager().HasMutedMusic())
 					Elseif not KEYMANAGER.IsDown(KEY_LALT)
-						TSoundManager.GetInstance().Mute(Not TSoundManager.GetInstance().IsMuted())
+						GetSoundManager().Mute(Not GetSoundManager().IsMuted())
 					EndIf
 				EndIf
 
@@ -744,6 +805,22 @@ Type TApp
 
 
 					If KEYMANAGER.IsHit(KEY_Y)
+						Local reach:Int = GetStationMap( 1 ).GetReach()
+						print "reach: " + reach +"  audienceReach=" + GetBroadcastmanager().GetAudienceResult(1).WholeMarket.GetTotalSum()
+						reach = GetStationMap( 1 ).GetReach()
+						rem
+						print "GetBroadcastManager: "
+						print GetBroadcastManager().GetAudienceResult(1).ToString()
+						print "Daily: "
+						debugstop
+						local dayHour:int = GetWorldTime().GetDayHour()
+						local day:int = GetWorldTime().GetDay()
+						Local dailyBroadcastStatistic:TDailyBroadcastStatistic = GetDailyBroadcastStatistic(day, True)
+						local r:TAudienceResult = TAudienceResult(dailyBroadcastStatistic.GetAudienceResult(1, dayHour))
+						if r then print r.ToString()
+						endrem
+
+
 '						print "Force Next Task:"
 '						GetPlayer(2).PlayerAI.CallLuaFunction("OnForceNextTask", null)
 
@@ -836,7 +913,7 @@ Type TApp
 						local foundAuction:int = 0
 						local foundSkipped:int = 0
 						local skippedFilterCount:int = 0
-						For local p:TProgrammeLicence = EachIn GetProgrammeLicenceCollection().licences
+						For local p:TProgrammeLicence = EachIn GetProgrammeLicenceCollection().licences.Values()
 							if p.IsEpisode() then continue
 							if not p.IsReleased() then continue
 							if p.IsSeries() then continue
@@ -909,37 +986,6 @@ Type TApp
 						endrem
 
 						rem
-						'dubletten
-						local duplicateCount:int = 0
-						local arr:TProgrammeLicence[] = TProgrammeLicence[] (GetProgrammeLicenceCollection().licences.ToArray())
-						For local i:int = 0 to arr.length -1
-
-							For local j:int = 0 to arr.length -1
-								if j = i then continue
-								if arr[i] = arr[j]
-									print "found duplicate: "+arr[i].GetTitle()
-									duplicateCount :+ 1
-									continue
-								endif
-
-								if arr[i].GetGUID() = arr[j].GetGUID()
-									print "found GUID duplicate: "+arr[i].GetTitle()
-									duplicateCount :+ 1
-									continue
-								endif
-
-
-								if arr[i].GetTitle() <> "Die Streichholzhammerbowle"
-									if arr[i].GetTitle() = arr[j].GetTitle()
-										print "found TITLE duplicate: "+arr[i].GetTitle()
-										duplicateCount :+ 1
-										continue
-									endif
-								endif
-							Next
-						Next
-						'print "COLLECTION DUPLICATE: "+duplicateCount+"      " + millisecs()
-
 						'Programme bei mehreren Spielern
 						'duplicateCount = 0
 						for local playerA:int = 1 to 4
@@ -1249,7 +1295,7 @@ endrem
 		endif
 
 		If openEscapeMenu
-			print "should open escape menu. gamestate="+GetGame().gamestate
+			'print "should open escape menu. gamestate="+GetGame().gamestate
 
 			'ask to exit to main menu
 			'TApp.CreateConfirmExitAppDialogue(True)
@@ -1440,6 +1486,11 @@ endrem
 			GetBitmapFontManager().baseFont.Draw("Boss #"+i+": "+MathHelper.NumberToString(GetPlayerBoss(i+1).mood,4), 10, 270 + i*13)
 		Next
 
+
+		'GetBitmapFontManager().baseFont.Draw("NewsEvents: "+GetNewsEventCollection().managedNewsEvents.count(), 680, 300)
+		For Local i:Int = 0 To 3
+			GetBitmapFontManager().baseFont.Draw("News #"+i+": "+GetPlayerProgrammeCollection(i+1).news.count(), 680, 320 + i*13)
+		Next
 
 		GetWorld().RenderDebug(660,0, 140, 180)
 		'GetPlayer().GetFigure().RenderDebug(new TVec2D.Init(660, 150))
@@ -1764,17 +1815,44 @@ endrem
 	End Function
 
 
+	Function onCloseModalDialogue:Int(triggerEvent:TEventBase)
+'		If App.settingsWindow and dialogue = App.settingsWindow.modalDialogue
+		If App.settingsWindow and App.settingsWindow.modalDialogue = triggerEvent.GetSender()
+			return onCloseSettingsWindow(triggerEvent)
+		elseif ExitAppDialogue = triggerEvent.GetSender()
+			return onAppConfirmExit(triggerEvent)
+		endif
+	End Function
+
+
+	Function onCloseSettingsWindow:Int(triggerEvent:TEventBase)
+		If Not App.settingsWindow Then Return False
+
+		'"apply" button was used...save the whole thing
+		If triggerEvent.GetData().GetInt("closeButton", -1) = 0
+			App.ApplySettingsWindow()
+		EndIf
+
+		'unset variable - allows escape/quit-window again
+		'App.settingsWindow.modaldialogue.Remove()
+		'App.settingsWindow = Null
+	End Function
+
+
 	Function onAppConfirmExit:Int(triggerEvent:TEventBase)
+rem
+'already checked in onCloseModalDialogue()
 		Local dialogue:TGUIModalWindow = TGUIModalWindow(triggerEvent.GetSender())
 		If Not dialogue Then Return False
+
+		'not interested in other dialogues
+		If dialogue <> ExitAppDialogue Then Return False
+endrem
 
 		'store closing time of this modal window (does not matter which
 		'one) to skip creating another exit dialogue within a certain
 		'timeframe
 		ExitAppDialogueTime = Time.MilliSecsLong()
-
-		'not interested in other dialogues
-		If dialogue <> ExitAppDialogue Then Return False
 
 
 		Local buttonNumber:Int = triggerEvent.GetData().getInt("closeButton",-1)
@@ -1855,6 +1933,7 @@ Type TGameState
 	Field _AwardCollection:TAwardCollection = Null
 	Field _NewsEventSportCollection:TNewsEventSportCollection = Null
 
+	Field _GameModifierManager:TGameModifierManager = null
 	Field _GameInformationCollection:TGameInformationCollection = Null
 	Field _IngameHelpWindowCollection:TIngameHelpWindowCollection = Null
 
@@ -1901,6 +1980,7 @@ Type TGameState
 	Field _RoomHandler_MovieAgency:RoomHandler_MovieAgency
 	Field _RoomHandler_AdAgency:RoomHandler_AdAgency
 	Field _RoomHandler_ScriptAgency:RoomHandler_ScriptAgency
+	Field _RoomHandler_News:RoomHandler_News
 	Field _RoomDoorBaseCollection:TRoomDoorBaseCollection
 	Field _RoomBaseCollection:TRoomBaseCollection
 	Field _PlayerColorList:TList
@@ -1940,6 +2020,7 @@ Type TGameState
 		GetNewsGenreDefinitionCollection().Initialize()
 		GetMovieGenreDefinitionCollection().Initialize()
 		AudienceManager.Initialize()
+		GetGameModifierManager().Initialize()
 
 		GetAdContractBaseCollection().Initialize()
 		GetAdContractCollection().Initialize()
@@ -2016,6 +2097,7 @@ Type TGameState
 
 		_Assign(_AudienceManager, AudienceManager, "AudienceManager", MODE_LOAD)
 		_Assign(_ProductionManager, TProductionManager._instance, "ProductionManager", MODE_LOAD)
+		_Assign(_GameModifierManager, TGameModifierManager._instance, "GameModifierManager", MODE_LOAD)
 
 		_Assign(_AdContractCollection, TAdContractCollection._instance, "AdContractCollection", MODE_LOAD)
 		_Assign(_AdContractBaseCollection, TAdContractBaseCollection._instance, "AdContractBaseCollection", MODE_LOAD)
@@ -2068,6 +2150,7 @@ Type TGameState
 		_Assign(_RoomHandler_MovieAgency, RoomHandler_MovieAgency._instance, "MovieAgency", MODE_LOAD)
 		_Assign(_RoomHandler_AdAgency, RoomHandler_AdAgency._instance, "AdAgency", MODE_LOAD)
 		_Assign(_RoomHandler_ScriptAgency, RoomHandler_ScriptAgency._instance, "ScriptAgency", MODE_LOAD)
+		_Assign(_RoomHandler_News, RoomHandler_News._instance, "News", MODE_LOAD)
 		_Assign(_Game, TGame._instance, "Game")
 
 
@@ -2142,6 +2225,7 @@ Type TGameState
 
 		_Assign(AudienceManager, _AudienceManager, "AudienceManager", MODE_SAVE)
 		_Assign(TProductionManager._instance, _ProductionManager, "ProductionManager", MODE_SAVE)
+		_Assign(TGameModifierManager._instance, _GameModifierManager, "GameModifierManager", MODE_SAVE)
 
 		_Assign(TBuilding._instance, _Building, "Building", MODE_SAVE)
 		_Assign(TElevator._instance, _Elevator, "Elevator", MODE_SAVE)
@@ -2183,6 +2267,7 @@ Type TGameState
 		_Assign(RoomHandler_MovieAgency._instance, _RoomHandler_MovieAgency, "MovieAgency", MODE_SAVE)
 		_Assign(RoomHandler_AdAgency._instance, _RoomHandler_AdAgency, "AdAgency", MODE_SAVE)
 		_Assign(RoomHandler_ScriptAgency._instance, _RoomHandler_ScriptAgency, "ScriptAgency", MODE_SAVE)
+		_Assign(RoomHandler_News._instance, _RoomHandler_News, "News", MODE_SAVE)
 	End Method
 
 
@@ -2211,7 +2296,8 @@ Type TSaveGame Extends TGameState
 	Field _Time_timeGone:Long = 0
 	Field _Entity_globalWorldSpeedFactor:Float =  0
 	Field _Entity_globalWorldSpeedFactorMod:Float =  0
-	Const SAVEGAME_VERSION:string = "1.1"
+	Const SAVEGAME_VERSION:string = "12"
+	Const MIN_SAVEGAME_VERSION:string = "11"
 	Global messageWindow:TGUIModalWindow
 	Global messageWindowBackground:TPixmap
 	Global messageWindowLastUpdate:Long
@@ -2395,6 +2481,14 @@ Type TSaveGame Extends TGameState
 		While not EOF(stream)
 			line = stream.ReadLine()
 
+			'scan bmo version to avoid faulty deserialization
+			if line.Find("<bmo ver=~q") >= 0
+				local bmoVersion:int = int(line[10 .. line.Find("~q>")])
+				if bmoVersion <= 7
+					return null
+				endif
+			endif
+
 			if line.Find("name=~q_Game~q type=~qTGame~q>") > 0
 				exit
 			endif
@@ -2426,12 +2520,15 @@ Type TSaveGame Extends TGameState
 
 		local content:string = "~n".Join(lines)
 
-		local p:TPersist = new TPersist
+
+		'local p:TPersist = new TPersist
+		Local p:TPersist = New TXMLPersistenceBuilder.Build()
 		local res:TData = TData(p.DeserializeObject(content))
 		if not res then res = new TData
 		res.Add("fileURI", fileURI)
 		res.Add("fileName", GetSavegameName(fileURI) )
 		res.AddNumber("fileTime", FileTime(fileURI))
+		p.Free()
 
 		return res
 	End Function
@@ -2439,69 +2536,12 @@ Type TSaveGame Extends TGameState
 
 	global _nilNode:TNode = new TNode._parent
 	Function RepairData()
-		local repairedNewsEventTemplates:int = 0
-		'if old savegame misses templates, add them back from news
-		if GetNewsEventTemplateCollection().GetCount() = 0
-			local availableNewsEvents:int = 0
-			Local node:TNode = GetNewsEventCollection().allNewsEvents._FirstNode()
-			While node And node <> _nilNode
-				local ne:TNewsEvent = TNewsEvent(node._value)
-				if not ne
-					node = node.NextNode()
-					continue
-				endif
-
-				availableNewsEvents :+ 1
-
-				'skip happened one time events
-				if ne.HasHappened() and not ne.IsReuseable()
-					node = node.NextNode()
-					continue
-				endif
-
-				local neT:TNewsEventTemplate = new TNewsEventTemplate
-				neT.CopyBaseFrom(ne)
-				neT.genre = ne.GetGenre()
-				neT.newsType = ne.newsType
-				neT.SetGUID( ne.GetGUID()+"-template" )
-				neT.SetOwner(neT.OWNER_NOBODY)
-				GetNewsEventTemplateCollection().Add(neT)
-
-				repairedNewsEventTemplates :+ 1
-
-				'move on to next node
-				node = node.NextNode()
-			Wend
-			TLogger.Log("Savegame.RepairData()", "Savegame missed news event templates. Recreated "+repairedNewsEventTemplates+" news templates from " + availableNewsEvents + " news events.", LOG_SAVELOAD)
-		endif
-
-
-		'remove non-allowed episodes/collections from the suitcase
-		'(versions prior 2018/02/28 mistakingly allowed that)
-		For local ppc:TPlayerProgrammeCollection = eachin GetPlayerProgrammeCollectionCollection().plans
-			local toRemove:TProgrammeLicence[] = new TProgrammeLicence[0]
-			For local licence:TProgrammeLicence = EachIn ppc.suitcaseProgrammeLicences
-				if licence.HasParentLicence() then toRemove :+ [licence]
-			Next
-			if toRemove.length > 0
-				For local licence:TProgrammeLicence = EachIn toRemove
-					'remove from player collection if we do no longer
-					'possess the series/collection
-					if not ppc.HasProgrammeLicence(licence.GetParentLicence())
-						ppc.singleLicences.remove(licence)
-						ppc._programmeLicences.remove(licence)
-					endif
-					ppc.suitcaseProgrammeLicences.Remove(licence)
-				Next
-				TLogger.Log("Savegame.RepairData()", "Savegame contained licence suitcase of player #" + ppc.owner+" with " + toRemove.length + " invalid licences of episodes or collection-elements.", LOG_SAVELOAD)
-			endif
-		Next
 		rem
 			would "break" unfinished series productions with re-ordered
 			production orders (1,3,2) and missing episodes ([1,null,3])
 
 		'repair broken custom productions
-		For local licence:TProgrammeLicence = EachIn GetProgrammeLicenceCollection().series
+		For local licence:TProgrammeLicence = EachIn GetProgrammeLicenceCollection().series.Values()
 			if not licence.subLicences or licence.subLicences.length = 0 then continue
 
 			local hasToFix:int = 0
@@ -2566,13 +2606,14 @@ Type TSaveGame Extends TGameState
 		EndIf
 
 		TPersist.maxDepth = 4096*4
-		Local persist:TPersist = New TPersist
+		Local persist:TPersist = New TXMLPersistenceBuilder.Build()
+		'Local persist:TPersist = New TPersist
 		persist.serializer = new TSavegameSerializer
 
 		local savegameSummary:TData = GetGameSummary(savename)
 		'invalid savegame
 		if not savegameSummary
-			TLogger.Log("Savegame.Load()", "Savegame file ~q"+saveName+"~q is corrupt.", LOG_SAVELOAD | LOG_ERROR)
+			TLogger.Log("Savegame.Load()", "Savegame file ~q"+saveName+"~q is corrupt or too old.", LOG_SAVELOAD | LOG_ERROR)
 			return False
 		endif
 
@@ -2593,7 +2634,12 @@ Type TSaveGame Extends TGameState
 
 		local loadingStart:int = Millisecs()
 		'this creates new TGameObjects - and therefore increases ID count!
+?bmxng
+		Local saveGame:TSaveGame  = TSaveGame(persist.DeserializeFromFile(savename))
+?not bmxng
 		Local saveGame:TSaveGame  = TSaveGame(persist.DeserializeFromFile(savename, XML_PARSE_HUGE))
+?
+		persist.Free()
 		If Not saveGame
 			TLogger.Log("Savegame.Load()", "Savegame file ~q"+saveName+"~q is corrupt.", LOG_SAVELOAD | LOG_ERROR)
 			Return False
@@ -2703,13 +2749,15 @@ endrem
 		TPersist.maxDepth = 4096
 		'save the savegame data as xml
 		'TPersist.format=False
-		local p:TPersist = New TPersist
+		Local p:TPersist = New TXMLPersistenceBuilder.Build()
+		'local p:TPersist = New TPersist
 		p.serializer = new TSavegameSerializer
 		if TPersist.compressed
 			p.SerializeToFile(saveGame, saveName+".zip")
 		else
 			p.SerializeToFile(saveGame, saveName)
 		endif
+		p.Free()
 
 		'tell everybody we finished saving
 		'payload is saveName and saveGame-object
@@ -2840,7 +2888,6 @@ Type TScreen_MainMenu Extends TGameScreen
 	Field guiButtonSettings:TGUIButton
 	Field guiButtonQuit:TGUIButton
 	Field guiLanguageDropDown:TGUISpriteDropDown
-	Field settingsWindow:TSettingsWindow
 	Field loadGameMenuWindow:TGUImodalWindowChain
 
 	Field stateName:TLowerString
@@ -2915,28 +2962,8 @@ Type TScreen_MainMenu Extends TGameScreen
 
 		EventManager.registerListenerMethod("guiobject.onClick", Self, "onClickButtons")
 
-		'handle saving/applying of settings
-		EventManager.RegisterListenerMethod("guiModalWindow.onClose", Self, "onCloseModalDialogue")
-
 		Return Self
 	End Method
-
-
-	Method onCloseModalDialogue:Int(triggerEvent:TEventBase)
-		If Not settingsWindow Then Return False
-
-		Local dialogue:TGUIModalWindow = TGUIModalWindow(triggerEvent.GetSender())
-		If dialogue <> settingsWindow.modalDialogue Then Return False
-
-		'"apply" button was used...save the whole thing
-		If triggerEvent.GetData().GetInt("closeButton", -1) = 0
-			ApplySettingsWindow()
-		EndIf
-		'unset variable - allows escape/quit-window again
-		if settingsWindow then settingsWindow.Remove()
-		settingsWindow = Null
-	End Method
-
 
 
 	'handle clicks on the buttons
@@ -2961,7 +2988,7 @@ Type TScreen_MainMenu Extends TGameScreen
 
 		Select sender
 			Case guiButtonSettings
-					CreateSettingsWindow()
+					App.CreateSettingsWindow()
 
 			Case guiButtonStart
 					PrepareGameObject()
@@ -3001,30 +3028,6 @@ Type TScreen_MainMenu Extends TGameScreen
 
 	End Method
 
-
-	Method CreateSettingsWindow()
-		'load config
-		App.LoadSettings()
-
-		if settingsWindow then settingsWindow.Remove()
-		settingsWindow = New TSettingsWindow.Init()
-	End Method
-
-
-	Method ApplySettingsWindow:Int()
-		Local newConfig:TData = App.config.copy()
-		'append values stored in gui elements
-		newConfig.Append(settingsWindow.ReadGuiValues())
-
-		App.SaveSettings(newConfig)
-		'save the new config as current config
-		App.config = newConfig
-		'and "reinit" settings
-		App.ApplySettings()
-
-		'=== GAME SETTINGS ===
-		GetGame().SetStartYear( App.config.GetInt("startyear", 0) )
-	End Method
 
 
 	Method CreateLoadGameWindow()
@@ -3537,509 +3540,6 @@ End Type
 
 
 
-'the modal window containing various gui elements to configure some
-'basics in the game
-Type TSettingsWindow
-	Field modalDialogue:TGUIGameModalWindow
-	Field inputPlayerName:TGUIInput
-	Field inputChannelName:TGUIInput
-	Field inputStartYear:TGUIInput
-	Field inputStationmap:TGUIDropDown
-	Field inputDatabase:TGUIDropDown
-	Field checkMusic:TGUICheckbox
-	Field checkSfx:TGUICheckbox
-	Field dropdownSoundEngine:TGUIDropDown
-	Field dropdownRenderer:TGUIDropDown
-	Field checkFullscreen:TGUICheckbox
-	Field checkVSync:TGUICheckbox
-	Field inputWindowResolutionWidth:TGUIInput
-	Field inputWindowResolutionHeight:TGUIInput
-	Field inputGameName:TGUIInput
-	Field inputInRoomSlowdown:TGUIInput
-	Field inputOnlinePort:TGUIInput
-	Field inputTouchClickRadius:TGUIInput
-	Field checkTouchInput:TGUICheckbox
-	Field checkLongClickMode:TGUICheckbox
-	Field inputLongClickTime:TGUIInput
-
-	Field checkShowIngameHelp:TGUICheckbox
-
-	'labels for deactivation
-	Field labelLongClickTime:TGUILabel
-	Field labelLongClickTimeMilliseconds:TGUILabel
-	Field labelTouchClickRadiusPixel:TGUILabel
-	Field labelTouchClickRadius:TGUILabel
-
-	Field _eventListeners:TLink[]
-
-
-	Method New()
-		EventManager.registerListenerMethod("guiCheckBox.onSetChecked", Self, "onCheckCheckboxes", "TGUICheckbox")
-	End Method
-
-
-	Method Remove:int()
-		'no need to remove them ... everything is handled via
-		'removal of the modalDialogue as the other elements are children
-		'of that dialogue
-		modalDialogue.Remove()
-		rem
-			inputPlayerName.Remove()
-			inputChannelName.Remove()
-			inputStartYear.Remove()
-			inputStationmap.Remove()
-			inputDatabase.Remove()
-			checkMusic.Remove()
-			checkSfx.Remove()
-			dropdownSoundEngine.Remove()
-			dropdownRenderer.Remove()
-			checkFullscreen.Remove()
-			inputGameName.Remove()
-			inputOnlinePort.Remove()
-		endrem
-
-		EventManager.unregisterListenersByLinks(_eventListeners)
-	End Method
-
-
-	Method Delete()
-
-		Remove()
-	End Method
-
-
-	Method ReadGuiValues:TData()
-		Local data:TData = New TData
-
-		data.Add("playername", inputPlayerName.GetValue())
-		data.Add("channelname", inputChannelName.GetValue())
-		data.Add("startyear", inputStartYear.GetValue())
-		'data.Add("stationmap", inputStationmap.GetValue())
-		data.Add("databaseDir", inputDatabase.GetValue())
-		data.Add("inroomslowdown", inputInRoomSlowdown.GetValue())
-
-		data.AddBoolString("sound_music", checkMusic.IsChecked())
-		data.AddBoolString("sound_effects", checkSfx.IsChecked())
-		data.Add("sound_engine", dropdownSoundEngine.GetSelectedEntry().data.GetString("value", "0"))
-
-
-		data.Add("renderer", dropdownRenderer.GetSelectedEntry().data.GetString("value", "0"))
-		data.AddBoolString("fullscreen", checkFullscreen.IsChecked())
-		data.AddBoolString("vsync", checkVSync.IsChecked())
-		data.Add("screenW", inputWindowResolutionWidth.GetValue())
-		data.Add("screenH", inputWindowResolutionHeight.GetValue())
-
-		data.Add("gamename", inputGameName.GetValue())
-		data.Add("onlineport", inputOnlinePort.GetValue())
-
-		data.AddBoolString("touchInput", checkTouchInput.IsChecked())
-		data.Add("touchClickRadius", inputTouchClickRadius.GetValue())
-		data.AddBoolString("longClickMode", checkLongClickMode.IsChecked())
-		data.Add("longClicktime", inputLongClickTime.GetValue())
-
-		data.AddBoolString("showIngameHelp", checkShowIngameHelp.IsChecked())
-
-		Return data
-	End Method
-
-
-	Method SetGuiValues:Int(data:TData)
-		inputPlayerName.SetValue(data.GetString("playername", "Player"))
-		inputChannelName.SetValue(data.GetString("channelname", "My Channel"))
-		inputStartYear.SetValue(data.GetInt("startyear", 1985))
-		'inputStationmap.SetValue(data.GetString("stationmap", "res/maps/germany.xml"))
-		if FileType(data.GetString("databaseDir")) <> 2
-			data.AddString("databaseDir", "res/database/Default")
-		endif
-		inputDatabase.SetValue(data.GetString("databaseDir", "res/database/Default"))
-		inputInRoomSlowdown.SetValue(data.GetInt("inroomslowdown", 100))
-		checkMusic.SetChecked(data.GetBool("sound_music", True))
-		checkSfx.SetChecked(data.GetBool("sound_effects", True))
-		checkFullscreen.SetChecked(data.GetBool("fullscreen", False))
-		checkVSync.SetChecked(data.GetBool("vsync", True))
-		inputWindowResolutionWidth.SetValue(Max(400, data.GetInt("screenW", 800)))
-		inputWindowResolutionHeight.SetValue(Max(300, data.GetInt("screenH", 600)))
-		checkTouchInput.SetChecked(data.GetBool("touchInput", MouseManager._ignoreFirstClick))
-		inputTouchClickRadius.SetValue(Max(5, data.GetInt("touchClickRadius", MouseManager._minSwipeDistance)))
-		checkLongClickMode.SetChecked(data.GetBool("longClickMode", MouseManager._longClickModeEnabled))
-		inputLongClickTime.SetValue(Max(50, data.GetInt("longClickTime", MouseManager._longClickTime)))
-
-		checkShowIngameHelp.SetChecked(data.GetBool("showIngameHelp", IngameHelpWindowCollection.showHelp))
-
-
-		'disable certain elements if needed
-		if not checkLongClickMode.IsChecked()
-			labelLongClickTime.Disable()
-			inputLongClickTime.Disable()
-			labelLongClickTimeMilliseconds.Disable()
-		endif
-		if not checkTouchInput.IsChecked()
-			labelTouchClickRadius.Disable()
-			inputTouchClickRadius.Disable()
-			labelTouchClickRadiusPixel.Disable()
-		endif
-
-
-		'check available sound engine entries
-		Local selectedDropDownItem:TGUIDropDownItem
-		For Local item:TGUIDropDownItem = EachIn dropdownSoundEngine.GetEntries()
-			Local soundEngine:string = item.data.GetString("value")
-			'if the same renderer - select this
-			If soundEngine = data.GetString("sound_engine", "")
-				selectedDropDownItem = item
-				Exit
-			EndIf
-		Next
-		'select the first if nothing was preselected
-		If Not selectedDropDownItem
-			dropdownSoundEngine.SetSelectedEntryByPos(0)
-		Else
-			dropdownSoundEngine.SetSelectedEntry(selectedDropDownItem)
-		EndIf
-
-		'check available renderer entries
-		selectedDropDownItem = null
-		For Local item:TGUIDropDownItem = EachIn dropdownRenderer.GetEntries()
-			Local renderer:Int = item.data.GetInt("value")
-			'if the same renderer - select this
-			If renderer = data.GetInt("renderer", 0)
-				selectedDropDownItem = item
-				Exit
-			EndIf
-		Next
-		'select the first if nothing was preselected
-		If Not selectedDropDownItem
-			dropdownRenderer.SetSelectedEntryByPos(0)
-		Else
-			dropdownRenderer.SetSelectedEntry(selectedDropDownItem)
-		EndIf
-
-
-		inputGameName.SetValue(data.GetString("gamename", "New Game"))
-		inputOnlinePort.SetValue(data.GetInt("onlineport", 4544))
-	End Method
-
-
-	Method Init:TSettingsWindow()
-		'LAYOUT CONFIG
-		Local nextY:Int = 0, nextX:Int = 0
-		Local rowWidth:Int[] = [210,210,250]
-		Local checkboxWidth:Int = 180
-		Local inputWidth:Int = 170
-		Local labelH:Int = 12
-		Local inputH:Int = 0
-		Local windowW:Int = 700
-		Local windowH:Int = 490
-
-		modalDialogue = New TGUIGameModalWindow.Create(New TVec2D, New TVec2D.Init(windowW, windowH), "SYSTEM")
-
-		modalDialogue.SetDialogueType(2)
-		modalDialogue.buttons[0].SetCaption(GetLocale("SAVE_AND_APPLY"))
-		modalDialogue.buttons[0].Resize(180,-1)
-		modalDialogue.buttons[1].SetCaption(GetLocale("CANCEL"))
-		modalDialogue.buttons[1].Resize(160,-1)
-		modalDialogue.SetCaptionAndValue(GetLocale("MENU_SETTINGS"), "")
-
-		Local canvas:TGUIObject = modalDialogue.GetGuiContent()
-
-		Local labelTitleGameDefaults:TGUILabel = New TGUILabel.Create(New TVec2D.Init(0, nextY), GetLocale("DEFAULTS_FOR_NEW_GAME"))
-		labelTitleGameDefaults.SetFont(GetBitmapFont("default", 14, BOLDFONT))
-		canvas.AddChild(labelTitleGameDefaults)
-		nextY :+ 25
-
-		Local labelPlayerName:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("PLAYERNAME")+":")
-		inputPlayerName = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(inputWidth,-1), "", 128)
-		canvas.AddChild(labelPlayerName)
-		canvas.AddChild(inputPlayerName)
-		inputH = inputPlayerName.GetScreenHeight()
-		nextY :+ inputH + labelH * 1.5
-
-		Local labelChannelName:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("CHANNELNAME")+":")
-		inputChannelName = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(inputWidth,-1), "", 128)
-		canvas.AddChild(labelChannelName)
-		canvas.AddChild(inputChannelName)
-		nextY :+ inputH + labelH * 1.5
-
-		Local labelStartYear:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("START_YEAR")+":")
-		inputStartYear = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(50,-1), "", 4)
-		canvas.AddChild(labelStartYear)
-		canvas.AddChild(inputStartYear)
-		nextY :+ inputH + labelH * 1.5
-
-		Local labelStationmap:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("STATIONMAP")+":")
-		inputStationmap = New TGUIDropDown.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(inputWidth,-1), "germany.xml", 128)
-		inputStationmap.disable()
-		canvas.AddChild(labelStationmap)
-		canvas.AddChild(inputStationmap)
-		nextY :+ inputH + labelH * 1.5
-
-		Local labelDatabase:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("DATABASE")+":")
-		inputDatabase = New TGUIDropDown.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(inputWidth,-1), "res/database/Default", 128)
-		inputDatabase.disable()
-		canvas.AddChild(labelDatabase)
-		canvas.AddChild(inputDatabase)
-		nextY :+ inputH + labelH * 1.5
-
-		checkShowIngameHelp = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth + 20,-1), GetLocale("SHOW_INTRODUCTORY_GUIDES"))
-		canvas.AddChild(checkShowIngameHelp)
-		nextY :+ checkShowIngameHelp.GetScreenHeight()
-
-		nextY :+ 15
-
-
-
-		'SINGLEPLAYER
-		Local labelTitleSingleplayer:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("SINGLEPLAYER"))
-		labelTitleSingleplayer.SetFont(GetBitmapFont("default", 14, BOLDFONT))
-		canvas.AddChild(labelTitleSingleplayer)
-		nextY :+ 25
-
-		Local labelInRoomSlowdown:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("GAME_SPEED_IN_ROOMS")+":")
-		inputInRoomSlowdown = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(75,-1), "", 128)
-		local labelInRoomSlowdownPercentage:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX + 75 + 5, nextY + 18), "%")
-		canvas.AddChild(labelInRoomSlowdown)
-		canvas.AddChild(inputInRoomSlowdown)
-		canvas.AddChild(labelInRoomSlowdownPercentage)
-		nextY :+ inputH + labelH * 1.5
-
-
-		nextY = 0
-		nextX = rowWidth[0]
-		'SOUND
-		Local labelTitleSound:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("SOUND_OUTPUT"))
-		labelTitleSound.SetFont(GetBitmapFont("default", 14, BOLDFONT))
-		canvas.AddChild(labelTitleSound)
-		nextY :+ 25
-
-		checkMusic = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth,-1), "")
-		checkMusic.SetCaption(GetLocale("MUSIC"))
-		canvas.AddChild(checkMusic)
-		nextY :+ Max(inputH - 5, checkMusic.GetScreenHeight())
-
-		checkSfx = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth,-1), "")
-		checkSfx.SetCaption(GetLocale("SFX"))
-		canvas.AddChild(checkSfx)
-		nextY :+ Max(inputH, checkSfx.GetScreenHeight())
-
-		Local labelSoundEngine:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("SOUND_ENGINE") + ":")
-		dropdownSoundEngine = New TGUIDropDown.Create(New TVec2D.Init(nextX, nextY + 12), New TVec2D.Init(inputWidth,-1), "", 128)
-		Local soundEngineValues:String[] = ["AUTOMATIC", "NONE"]
-		Local soundEngineTexts:String[] = ["Auto", "---"]
-		?Win32
-			soundEngineValues :+ ["WINDOWS_ASIO","WINDOWS_DS"]
-			soundEngineTexts :+ ["ASIO", "Direct Sound"]
-		?Linux
-			soundEngineValues :+ ["LINUX_ALSA","LINUX_PULSE","LINUX_OSS"]
-			soundEngineTexts :+ ["ALSA", "PulseAudio", "OSS"]
-		?MacOS
-			soundEngineValues :+ ["MACOSX_CORE"]
-			soundEngineTexts :+ ["CoreAudio"]
-		?
-
-		Local itemHeight:Int = 0
-		For Local i:Int = 0 Until soundEngineValues.Length
-			Local item:TGUIDropDownItem = New TGUIDropDownItem.Create(Null, Null, soundEngineTexts[i])
-			item.SetValueColor(TColor.CreateGrey(50))
-			item.data.Add("value", soundEngineValues[i])
-			dropdownSoundEngine.AddItem(item)
-			If itemHeight = 0 Then itemHeight = item.GetScreenHeight()
-		Next
-		dropdownSoundEngine.SetListContentHeight(itemHeight * Len(soundEngineValues))
-
-		canvas.AddChild(labelSoundEngine)
-		canvas.AddChild(dropdownSoundEngine)
-'		GuiManager.SortLists()
-		nextY :+ inputH + labelH * 1.5
-		nextY :+ 15
-
-
-		'GRAPHICS
-		Local labelTitleGraphics:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("GRAPHICS"))
-		labelTitleGraphics.SetFont(GetBitmapFont("default", 14, BOLDFONT))
-		canvas.AddChild(labelTitleGraphics)
-		nextY :+ 25
-
-		Local labelRenderer:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("RENDERER") + ":")
-		dropdownRenderer = New TGUIDropDown.Create(New TVec2D.Init(nextX, nextY + 12), New TVec2D.Init(inputWidth,-1), "", 128)
-		'Local rendererValues:String[] = ["0", "4"]
-		'Local rendererTexts:String[] = ["OpenGL", "Buffered OpenGL"]
-		Local rendererValues:String[]
-		Local rendererTexts:String[]
-
-		'fill with all available renderers
-		For local i:int = 0 until TGraphicsManager.RENDERER_AVAILABILITY.length
-			if TGraphicsManager.RENDERER_AVAILABILITY[i]
-				rendererValues :+ [string(i)] 'i is the same key here
-				rendererTexts :+ [ TGraphicsManager.RENDERER_NAMES[i] ]
-			endif
-		Next
-
-		itemHeight = 0
-		For Local i:Int = 0 Until rendererValues.Length
-			Local item:TGUIDropDownItem = New TGUIDropDownItem.Create(Null, Null, rendererTexts[i])
-			item.SetValueColor(TColor.CreateGrey(50))
-			item.data.Add("value", rendererValues[i])
-			dropdownRenderer.AddItem(item)
-			If itemHeight = 0 Then itemHeight = item.GetScreenHeight()
-		Next
-		dropdownRenderer.SetListContentHeight(itemHeight * Len(rendererValues))
-
-		canvas.AddChild(labelRenderer)
-		canvas.AddChild(dropdownRenderer)
-		nextY :+ inputH + labelH * 1.5
-
-		checkFullscreen = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth,-1), "")
-		checkFullscreen.SetCaption(GetLocale("FULLSCREEN"))
-		canvas.AddChild(checkFullscreen)
-		nextY :+ Max(inputH -5, checkFullscreen.GetScreenHeight())
-
-		checkVSync = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth,-1), "")
-		checkVSync.SetCaption(GetLocale("VSYNC"))
-		canvas.AddChild(checkVSync)
-		nextY :+ Max(inputH, checkVSync.GetScreenHeight())
-
-		Local labelWindowResolution:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("WINDOW_MODE_RESOLUTION")+":")
-		inputWindowResolutionWidth = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + 12), New TVec2D.Init(inputWidth/2 - 15,-1), "", 4)
-		inputWindowResolutionHeight = New TGUIInput.Create(New TVec2D.Init(nextX + inputWidth/2 + 15, nextY + 12), New TVec2D.Init(inputWidth/2 - 15,-1), "", 4)
-		Local labelWindowResolutionX:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX + inputWidth/2 - 4, nextY + 18), "x")
-		canvas.AddChild(labelWindowResolution)
-		canvas.AddChild(labelWindowResolutionX)
-		canvas.AddChild(inputWindowResolutionWidth)
-		canvas.AddChild(inputWindowResolutionHeight)
-		nextY :+ inputH + 5 + labelH * 1.5
-
-
-		'MULTIPLAYER
-		nextY = 0
-		nextX = rowWidth[0] + rowWidth[1]
-		Local labelTitleMultiplayer:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("MULTIPLAYER"))
-		labelTitleMultiplayer.SetFont(GetBitmapFont("default", 14, BOLDFONT))
-		canvas.AddChild(labelTitleMultiplayer)
-		nextY :+ 25
-
-		Local labelGameName:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("GAME_TITLE")+":")
-		inputGameName = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + labelH), New TVec2D.Init(inputWidth,-1), "", 128)
-		canvas.AddChild(labelGameName)
-		canvas.AddChild(inputGameName)
-		nextY :+ inputH + labelH * 1.5
-
-
-		Local labelOnlinePort:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("PORT_ONLINEGAME")+":")
-		inputOnlinePort = New TGUIInput.Create(New TVec2D.Init(nextX, nextY + 12), New TVec2D.Init(50,-1), "", 4)
-		canvas.AddChild(labelOnlinePort)
-		canvas.AddChild(inputOnlinePort)
-		nextY :+ inputH + labelH * 1.5
-		nextY :+ 15
-
-		'INPUT
-		'nextY = 0
-		'nextX = rowWidth[0] + rowWidth[1]
-		Local labelTitleInput:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("INPUT"))
-		labelTitleInput.SetFont(GetBitmapFont("default", 14, BOLDFONT))
-		canvas.AddChild(labelTitleInput)
-		nextY :+ 25
-
-		checkTouchInput = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth + 20,-1), GetLocale("USE_TOUCH_INPUT"))
-		canvas.AddChild(checkTouchInput)
-		nextY :+ checkTouchInput.GetScreenHeight()
-
-		local labelTouchInput:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("USE_TOUCH_INPUT_EXPLANATION"))
-		canvas.AddChild(labelTouchInput)
-		labelTouchInput.Resize(checkboxWidth+30,-1)
-		labelTouchInput.SetFont( GetBitmapFont("default", 10) )
-		labelTouchInput.SetValueColor(new TColor.CreateGrey(75))
-		labelTouchInput.SetValue(labelTouchInput.GetValue())
-		nextY :+ labelTouchInput.GetValueDimension().y + 5
-
-		labelTouchClickRadius = New TGUILabel.Create(New TVec2D.Init(nextX + 22, nextY), GetLocale("MOVE_INSTEAD_CLICK_RADIUS")+":")
-		inputTouchClickRadius = New TGUIInput.Create(New TVec2D.Init(nextX + 22, nextY + 12), New TVec2D.Init(50,-1), "", 4)
-		labelTouchClickRadiusPixel = New TGUILabel.Create(New TVec2D.Init(nextX + 22 + 55, nextY + 18), "px")
-		canvas.AddChild(labelTouchClickRadius)
-		canvas.AddChild(inputTouchClickRadius)
-		canvas.AddChild(labelTouchClickRadiusPixel)
-		nextY :+ Max(inputH, inputTouchClickRadius.GetScreenHeight()) + 18
-
-
-		checkLongClickMode = New TGUICheckbox.Create(New TVec2D.Init(nextX, nextY), New TVec2D.Init(checkboxWidth + 20,-1), GetLocale("LONGCLICK_MODE"))
-		canvas.AddChild(checkLongClickMode)
-		nextY :+ checkLongClickMode.GetScreenHeight()
-
-		local labelLongClickMode:TGUILabel = New TGUILabel.Create(New TVec2D.Init(nextX, nextY), GetLocale("LONGCLICK_MODE_EXPLANATION"))
-		canvas.AddChild(labelLongClickMode)
-		labelLongClickMode.Resize(checkboxWidth+30, -1)
-		labelLongClickMode.SetFont( GetBitmapFont("default", 10) )
-		labelLongClickMode.SetValueColor(new TColor.CreateGrey(75))
-		nextY :+ labelLongClickMode.GetValueDimension().y + 5
-
-		labelLongClickTime = New TGUILabel.Create(New TVec2D.Init(nextX + 22, nextY), GetLocale("LONGCLICK_TIME")+":")
-		inputLongClickTime = New TGUIInput.Create(New TVec2D.Init(nextX + 22, nextY + 12), New TVec2D.Init(50,-1), "", 4)
-		labelLongClickTimeMilliseconds = New TGUILabel.Create(New TVec2D.Init(nextX + 22 + 55 , nextY + 18), "ms")
-		canvas.AddChild(labelLongClickTime)
-		canvas.AddChild(inputLongClickTime)
-		canvas.AddChild(labelLongClickTimeMilliseconds)
-
-		nextY :+ inputH + 5
-
-
-		'fill values
-		SetGuiValues(App.config)
-
-		modalDialogue.Open()
-
-		Return Self
-	End Method
-
-
-	Method onCheckCheckboxes:int(event:TEventSimple)
-		local checkBox:TGUICheckbox = TGUICheckbox(event.GetSender())
-		if not checkBox then return False
-
-		if checkBox = checkLongClickMode
-			if not labelLongClickTime then return False
-			if not inputLongClickTime then return False
-			if not labelLongClickTimeMilliseconds then return False
-
-			if checkLongClickMode.IsChecked()
-				if not labelLongClickTime.IsEnabled()
-					labelLongClickTime.Enable()
-					inputLongClickTime.Enable()
-					labelLongClickTimeMilliseconds.Enable()
-				endif
-			else
-				if labelLongClickTime.IsEnabled()
-					labelLongClickTime.Disable()
-					inputLongClickTime.Disable()
-					labelLongClickTimeMilliseconds.Disable()
-				endif
-			endif
-		endif
-
-		if checkBox = checkTouchInput
-			if not labelTouchClickRadius then return False
-			if not inputTouchClickRadius then return False
-			if not labelTouchClickRadiusPixel then return False
-
-			if checkTouchInput.IsChecked()
-				if not labelTouchClickRadius.IsEnabled()
-					labelTouchClickRadius.Enable()
-					inputTouchClickRadius.Enable()
-					labelTouchClickRadiusPixel.Enable()
-				endif
-			else
-				if labelTouchClickRadius.IsEnabled()
-					labelTouchClickRadius.Disable()
-					inputTouchClickRadius.Disable()
-					labelTouchClickRadiusPixel.Disable()
-				endif
-			endif
-		endif
-
-		return True
-	End Method
-End Type
-
-
-
 
 Type GameEvents
 	Global _eventListeners:TLink[]
@@ -4134,7 +3634,8 @@ Type GameEvents
 
 		'we want to handle "/dev bla"-commands via chat
 		_eventListeners :+ [ EventManager.registerListenerFunction("chat.onAddEntry", onChatAddEntry ) ]
-
+		'relay incoming chat messages to the AI
+		_eventListeners :+ [ EventManager.registerListenerFunction("chat.onAddEntry", onChatAddEntryForAI ) ]
 
 		'dev
 		_eventListeners :+ [ EventManager.registerListenerFunction("player.onEnterRoom", onPlayerEntersRoom ) ]
@@ -4217,10 +3718,71 @@ Type GameEvents
 	End Function
 
 
+	Function onChatAddEntryForAI:Int(triggerEvent:TEventBase)
+		Local text:String = triggerEvent.GetData().GetString("text")
+		Local senderID:int = triggerEvent.GetData().GetInt("senderID")
+		Local channels:int = triggerEvent.GetData().GetInt("channels")
+
+		local commandType:int = TGUIChat.GetCommandFromText(text)
+		local commandText:string = TGUIChat.GetCommandStringFromText(text)
+		'print "SenderID=" + senderID +"   commandType/Text="+commandType + "/"+commandText + "   text="+text
+
+		'=== PRIVATE / WHISPER ===
+		'-> send to AI ?
+		if commandType = CHAT_COMMAND_WHISPER
+			local message:string = TGUIChat.GetPayloadFromText(text)
+			local receiver:string = message.split(" ")[0]
+			local receiverID:int = int(receiver)
+			local playerBase:TPlayerBase
+			if string(receiverID) <> receiver > 9 'some odd number containing thing or playername?
+				For Local pBase:TPlayerBase = EachIn GetPlayerBaseCollection().players
+					if pBase.name.ToLower() = receiver.ToLower()
+						message = message[receiver.length+1 ..] 'remove name/id
+						receiverID = pBase.playerID
+						receiver = pBase.name
+						playerBase = pBase
+						exit
+					endif
+				Next
+			elseif receiverID > 0 and receiverID < 9
+				message = message[receiver.length+1 ..] 'remove name/id
+				playerBase = GetPlayerBase(receiverID)
+				if playerBase
+					receiver = playerBase.name
+				endif
+			endif
+			if playerBase and TPlayer(playerBase).isLocalAI()
+				TPlayer(playerBase).PlayerAI.CallOnChat(senderID, message, CHAT_COMMAND_WHISPER)
+			endif
+		endif
+
+		'public chat
+		if commandType = CHAT_COMMAND_NONE
+			'ignore chats starting with a "command" (maybe misspelled a whisper)
+			'also ignore system channel messages
+			if text.trim().Find("/") <> 0 and (channels & CHAT_CHANNEL_SYSTEM) = 0 'or text.trim().Find("[DEV]") = 0
+				'local channels:int = TGUIChat.GetChannelsFromText(text)
+				local message:string = TGUIChat.GetPayloadFromText(text)
+
+				'inform local AI
+				For Local player:TPLayer = EachIn GetPlayerCollection().players
+					if player.isLocalAI()
+						player.PlayerAI.CallOnChat(senderID, message, CHAT_COMMAND_NONE, channels)
+					endif
+				Next
+			endif
+			return True
+		endif
+	End Function
+
+
 	Function onChatAddEntry:Int(triggerEvent:TEventBase)
 		Local text:String = triggerEvent.GetData().GetString("text")
-		'only interested in system/dev-commands
+
+		'=== SYSTEM / DEV Chat ===
+		'only interested in system/dev-commands from here on
 		If TGUIChat.GetCommandFromText(text) <> CHAT_COMMAND_SYSTEM Then Return False
+
 
 		'skip "/sys " and only return the payload
 		'-> "/sys addmoney 1000" gets "addmoney 1000"
@@ -4259,7 +3821,7 @@ Type GameEvents
 			Case "maxaudience"
 				If Not player Then Return GetGame().SendSystemMessage(PLAYER_NOT_FOUND)
 				GetStationMap(player.playerID).CheatMaxAudience()
-				GetGame().SendSystemMessage("[DEV] Set Player #"+player.playerID+"'s maximum audience to "+GetStationMap(player.playerID).reach)
+				GetGame().SendSystemMessage("[DEV] Set Player #"+player.playerID+"'s maximum audience to "+GetStationMap(player.playerID).GetReach())
 
 			Case "debug"
 				local what:string = payload
@@ -4269,6 +3831,14 @@ Type GameEvents
 						TVTDebugQuoteInfos = False
 						TVTDebugModifierInfos = False
 				End Select
+
+			Case "commandai"
+				If Not player Then Return GetGame().SendSystemMessage(PLAYER_NOT_FOUND)
+				if not player.IsLocalAI()
+					GetGame().SendSystemMessage("[DEV] cannot command non-local AI player.")
+				else
+					player.playerAI.CallOnChat(GetPlayer().playerID, "CMD_" + paramS, CHAT_COMMAND_WHISPER)
+				endif
 
 			Case "playerai"
 				if GetGame().networkGame
@@ -5575,10 +5145,10 @@ Type GameEvents
 
 
 	Function OnMinute:Int(triggerEvent:TEventBase)
-		local time:Long = triggerEvent.GetData().GetLong("time",-1)
-		Local minute:Int = GetWorldTime().GetDayMinute(time)
-		Local hour:Int = GetWorldTime().GetDayHour(time)
-		Local day:Int = GetWorldTime().GetDay(time)
+		local now:Long = triggerEvent.GetData().GetLong("time",-1)
+		Local minute:Int = GetWorldTime().GetDayMinute(now)
+		Local hour:Int = GetWorldTime().GetDayHour(now)
+		Local day:Int = GetWorldTime().GetDay(now)
 		If hour = -1 Then Return False
 
 		'=== UPDATE GAME MODIFIERS ===
@@ -5624,7 +5194,9 @@ Type GameEvents
 				GetGame().refillMovieAgencyTime = GetGame().refillMovieAgencyTimer + randrange(0,20)-10
 
 				TLogger.Log("GameEvents.OnMinute", "partly refilling movieagency", LOG_DEBUG)
+				local t:long = Time.MillisecsLong()
 				RoomHandler_movieagency.GetInstance().ReFillBlocks(True, 0.5)
+				TLogger.Log("GameEvents.OnMinute", "... took " + (Time.MillisecsLong() - t)+"ms", LOG_DEBUG)
 			EndIf
 		EndIf
 		If GetGame().refillScriptAgencyTime <= 0
@@ -5636,7 +5208,10 @@ Type GameEvents
 				GetGame().refillScriptAgencyTime = GetGame().refillScriptAgencyTimer + randrange(0,20)-10
 
 				TLogger.Log("GameEvents.OnMinute", "partly refilling scriptagency", LOG_DEBUG)
+				local t:long = Time.MillisecsLong()
+				RoomHandler_scriptagency.GetInstance().WriteNewScripts()
 				RoomHandler_scriptagency.GetInstance().ReFillBlocks(True, 0.65)
+				TLogger.Log("GameEvents.OnMinute", "... took " + (Time.MillisecsLong() - t)+"ms", LOG_DEBUG)
 			EndIf
 		EndIf
 		If GetGame().refillAdAgencyTime <= 0
@@ -5648,12 +5223,14 @@ Type GameEvents
 				GetGame().refillAdAgencyTime = GetGame().refillAdAgencyTimer + randrange(0,20)-10
 
 				TLogger.Log("GameEvents.OnMinute", "partly refilling adagency", LOG_DEBUG)
+				local t:long = Time.MillisecsLong()
 				If GetGame().refillAdAgencyOverridePercentage <> GetGame().refillAdAgencyPercentage
 					RoomHandler_adagency.GetInstance().ReFillBlocks(True, GetGame().refillAdAgencyOverridePercentage)
 					GetGame().refillAdAgencyOverridePercentage = GetGame().refillAdAgencyPercentage
 				Else
 					RoomHandler_adagency.GetInstance().ReFillBlocks(True, GetGame().refillAdAgencyPercentage)
 				EndIf
+				TLogger.Log("GameEvents.OnMinute", "... took " + (Time.MillisecsLong() - t)+"ms", LOG_DEBUG)
 			EndIf
 		EndIf
 
@@ -5819,7 +5396,7 @@ Type GameEvents
 		'=== UPDATE ACHIEVEMENTS ===
 		'(do that AFTER setting the broadcasts and calculating the
 		' audience as some achievements check audience of a broadcast)
-		GetAchievementCollection().Update(time)
+		GetAchievementCollection().Update(now)
 
 		Return True
 	End Function
@@ -5977,6 +5554,11 @@ Type GameEvents
 			GetGame().ComputeDailyCosts(day)
 			'then earn... (avoid wrong balance interest)
 			GetGame().ComputeDailyIncome(day)
+
+			'archive player image of that day
+			GetPublicImageCollection().ArchiveImages()
+			'archive pressure group sympathies of that day
+			GetPressureGroupCollection().ArchiveSympathies()
 
 			'Check if a player goes bankrupt now
 			GetGame().UpdatePlayerBankruptLevel()
@@ -6606,7 +6188,7 @@ Function PrintCurrentTranslationState(compareLang:string="tr")
 	print "=== NEWSEVENTS ================="
 	print "AVAILABLE:"
 	print "----------"
-	For local obj:TNewsEvent = EachIn GetNewsEventCollection().managedNewsEvents.Values()
+	For local obj:TNewsEvent = EachIn GetNewsEventCollection().newsEvents.Values()
 		local printed:int = False
 		if obj.title.Get("de") <> obj.title.Get(compareLang)
 			print "* [T] de: "+ obj.title.Get("de").Replace("~n", "~n          ")
@@ -6624,7 +6206,7 @@ Function PrintCurrentTranslationState(compareLang:string="tr")
 	print "~t"
 	print "MISSING:"
 	print "--------"
-	For local obj:TNewsEvent = EachIn GetNewsEventCollection().managedNewsEvents.Values()
+	For local obj:TNewsEvent = EachIn GetNewsEventCollection().newsEvents.Values()
 		local printed:int = False
 		if obj.title.Get("de") = obj.title.Get(compareLang)
 			print "* [T] de: "+ obj.title.Get("de").Replace("~n", "~n          ")

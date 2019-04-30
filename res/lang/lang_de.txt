@@ -33,6 +33,8 @@ SINGLEPLAYER = Einzelspieler
 DEFAULTS_FOR_NEW_GAME= Vorgaben "Neues Spiel"
 RENDERER = Renderer
 SOUND_ENGINE = Soundengine
+SOUND_MUSIC_VOLUME = Musiklautstärke
+SOUND_SFX_VOLUME = SFX-Lautstärke
 PORT_ONLINEGAME = Port für Onlinespiele
 GAME_SPEED_IN_ROOMS = Spielgeschwind. in Räumen
 
@@ -1095,6 +1097,9 @@ AI_WILL_TAKE_OVER_THIS_PLAYER = KI wird diesen Spieler übernehmen.
 GENDER_MEN = Männer
 GENDER_WOMEN = Frauen
 GENDER_ALL = Alle
+GENDER_MEN_SHORT = M
+GENDER_WOMEN_SHORT = F
+
 
 LIVE_ON_TAPE = Liveaufzeichnung
 ALL_MATCHES_FINISHED = Alle Begegnungen beendet
@@ -1167,3 +1172,8 @@ PRICES_WILL_RISE = Die Preise für Programme und Nachrichten steigen an.
 AUDIENCE_REACH_LEVEL_DECREASED = Reichweitenlevel gesunken
 LEVEL_DECREASED_FROM_X_TO_Y = Level verringert sich von %X% auf %Y%.
 PRICES_WILL_FALL = Die Preise für Programme und Nachrichten fallen.
+
+NEWS_SORT_TOPICALITY = Sortiere nach Aktualität
+NEWS_SORT_PAID = Sortiere nach Bezahlt-Status
+NEWS_SORT_AGE = Sortiere nach Alter
+NEWS_SORT_PRICE = Sortiere nach Preis

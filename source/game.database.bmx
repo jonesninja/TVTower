@@ -23,6 +23,8 @@ Type TDatabaseLoader
 	Field newsCount:Int, totalNewsCount:Int
 	Field achievementCount:Int, totalAchievementCount:Int
 	Field contractsCount:Int, totalContractsCount:Int
+	Field personsBaseCount:Int, totalPersonsBaseCount:Int
+	Field personsCount:Int, totalPersonsCount:Int
 
 	Field loadError:String = ""
 
@@ -194,7 +196,7 @@ Type TDatabaseLoader
 		Next
 
 		if required or validURIs > 0
-			TLogger.log("TDatabase.Load()", "Loaded from "+validURIs + " DBs. Found " + totalSeriesCount + " series, " + totalMoviesCount + " movies, " + totalContractsCount + " advertisements, " + totalNewsCount + " news, " + totalProgrammeRolesCount + " roles in scripts, " + totalScriptTemplatesCount + " script templates and "+ totalAchievementCount+" achievements. Loading time: " + stopWatchAll.GetTime() + "ms", LOG_LOADING)
+			TLogger.log("TDatabase.Load()", "Loaded from "+validURIs + " DBs. Found " + totalSeriesCount + " series, " + totalMoviesCount + " movies, " + totalPersonsBaseCount+"/"+totalPersonsCount +" basePersons/persons, " + totalContractsCount + " advertisements, " + totalNewsCount + " news, " + totalProgrammeRolesCount + " roles in scripts, " + totalScriptTemplatesCount + " script templates and "+ totalAchievementCount+" achievements. Loading time: " + stopWatchAll.GetTime() + "ms", LOG_LOADING)
 		endif
 
 		if required and (totalSeriesCount = 0 or totalMoviesCount = 0 or totalNewsCount = 0 or totalContractsCount = 0)
@@ -217,6 +219,8 @@ Type TDatabaseLoader
 		newsCount = 0
 		achievementCount = 0
 		contractsCount = 0
+		personsCount = 0
+		personsBaseCount = 0
 
 		'recognize version
 		local versionNode:TxmlNode = xml.FindRootChild("version")
@@ -246,7 +250,10 @@ Type TDatabaseLoader
 			If nodePerson.getName() <> "person" then continue
 
 			'param false = load as insignificant
-			LoadV3ProgrammePersonBaseFromNode(nodePerson, xml, FALSE)
+			if LoadV3ProgrammePersonBaseFromNode(nodePerson, xml, FALSE)
+				personsBaseCount :+ 1
+				totalPersonsBaseCount :+ 1
+			endif
 		Next
 
 		'celebrities (they have more details)
@@ -255,7 +262,10 @@ Type TDatabaseLoader
 			If nodePerson.getName() <> "person" then continue
 
 			'param true = load as celebrity
-			LoadV3ProgrammePersonBaseFromNode(nodePerson, xml, TRUE)
+			if LoadV3ProgrammePersonBaseFromNode(nodePerson, xml, TRUE)
+				personsCount :+ 1
+				totalPersonsCount :+ 1
+			endif
 		Next
 
 
@@ -355,7 +365,7 @@ Type TDatabaseLoader
 		endif
 
 
-		TLogger.log("TDatabase.Load()", "Loaded DB ~q" + xml.filename + "~q (version 3). Found " + seriesCount + " series, " + moviesCount + " movies, " + contractsCount + " advertisements, " + newsCount + " news, " + achievementCount+" achievements. loading time: " + stopWatch.GetTime() + "ms", LOG_LOADING)
+		TLogger.log("TDatabase.Load()", "Loaded DB ~q" + xml.filename + "~q (version 3). Found " + seriesCount + " series, " + moviesCount + " movies, " + personsBaseCount + "/" + personsCount +" basePersons/persons, " + contractsCount + " advertisements, " + newsCount + " news, " + achievementCount+" achievements. loading time: " + stopWatch.GetTime() + "ms", LOG_LOADING)
 	End Method
 
 
@@ -367,7 +377,7 @@ Type TDatabaseLoader
 
 		'fetch potential meta data
 		local mData:TData = LoadV3ProgrammePersonBaseMetaDataFromNode(GUID, node, xml, isCelebrity)
-		metaData.Add(GUID, mData )
+		if mData then metaData.Add(GUID, mData )
 
 		'skip forbidden users (DEV)
 		if not IsAllowedUser(mData.GetString("createdBy"), "person") then return Null
@@ -521,7 +531,7 @@ Type TDatabaseLoader
 
 		'fetch potential meta data
 		local mData:TData = LoadV3NewsEventMetaDataFromNode(GUID, node, xml)
-		metaData.Add(GUID, mData )
+		if mData then metaData.Add(GUID, mData )
 
 		'skip forbidden users (DEV)
 		if not IsAllowedUser(mData.GetString("createdBy"), "newsevent") then return Null
@@ -666,7 +676,8 @@ Type TDatabaseLoader
 		local doAdd:int = True
 
 		'fetch potential meta data
-		metaData.Add( GUID, LoadV3AchievementElementsMetaDataFromNode(GUID, node, xml) )
+		local mData:TData = LoadV3AchievementElementsMetaDataFromNode(GUID, node, xml)
+		if mData then metaData.Add(GUID, mData )
 
 		'try to fetch an existing one
 		local achievement:TAchievement = GetAchievementCollection().GetAchievement(GUID)
@@ -747,7 +758,7 @@ Type TDatabaseLoader
 
 		'fetch potential meta data
 		local mData:TData = LoadV3AchievementElementsMetaDataFromNode(GUID, node, xml)
-		metaData.Add(GUID, mData)
+		if mData then metaData.Add(GUID, mData )
 
 		Local reuseExisting:int = False
 
@@ -826,7 +837,7 @@ Type TDatabaseLoader
 
 		'fetch potential meta data
 		local mData:TData = LoadV3AdContractBaseMetaDataFromNode(GUID, node, xml)
-		metaData.Add(GUID, mData)
+		if mData then metaData.Add(GUID, mData )
 
 		'skip forbidden users (DEV)
 		if not IsAllowedUser(mData.GetString("createdBy"), "adcontract") then return Null
@@ -915,8 +926,8 @@ Type TDatabaseLoader
 		'do not reset "data" before - it contains the pressure groups
 		xml.LoadValuesToData(nodeConditions, data, [..
 			"min_audience", "min_image", "target_group", ..
-			"allowed_programme_type", "allowed_genre", ..
-			"prohibited_genre", "prohibited_programme_type" ..
+			"allowed_programme_type", "allowed_programme_flag", "allowed_genre", ..
+			"prohibited_programme_type", "prohibited_programme_flag", "prohibited_genre" ..
 		])
 		'0-100% -> 0.0 - 1.0
 		adContract.minAudienceBase = 0.01 * data.GetFloat("min_audience", adContract.minAudienceBase*100.0)
@@ -929,8 +940,8 @@ Type TDatabaseLoader
 		adContract.forbiddenProgrammeType = data.GetInt("prohibited_programme_type", adContract.forbiddenProgrammeType)
 		adContract.forbiddenProgrammeFlag = data.GetInt("prohibited_programme_flag", adContract.forbiddenProgrammeFlag)
 		'if only one group
-		adContract.proPressureGroups = data.GetInt("pro_pressure_groups", adContract.proPressureGroups)
-		adContract.contraPressureGroups = data.GetInt("contra_pressure_groups", adContract.contraPressureGroups)
+		'adContract.proPressureGroups = data.GetInt("pro_pressure_groups", adContract.proPressureGroups)
+		'adContract.contraPressureGroups = data.GetInt("contra_pressure_groups", adContract.contraPressureGroups)
 		rem
 		for multiple groups:
 		local proPressureGroups:String[] = data.GetString("pro_pressure_groups", "").Split(" ")
@@ -973,7 +984,7 @@ Type TDatabaseLoader
 
 		'fetch potential meta data
 		local mData:TData = LoadV3ProgrammeLicenceMetaDataFromNode(GUID, node, xml, parentLicence)
-		metaData.Add( GUID, mData )
+		if mData then metaData.Add(GUID, mData )
 
 		'skip if not "all" are allowed (no creator data available)
 		if not IsAllowedUser(mData.GetString("createdBy"), "programmelicence") then return Null
@@ -1374,7 +1385,8 @@ Type TDatabaseLoader
 
 		'fetch potential meta data
 		local mData:TData = LoadV3ScriptTemplateMetaDataFromNode(GUID, node, xml, parentScriptTemplate)
-		metaData.Add( GUID, mData)
+		if mData then metaData.Add(GUID, mData )
+
 		'skip forbidden users (DEV)
 		if not IsAllowedUser(mData.GetString("createdBy"), "adcontract") then return Null
 
@@ -1395,11 +1407,11 @@ Type TDatabaseLoader
 			'care of this already)
 			scriptTemplate.templateVariables = null
 			scriptTemplate.subScripts = new TScriptTemplate[0]
-			scriptTemplate.parentScriptGUID = ""
+			scriptTemplate.parentScriptID = 0
 		endif
 
 		if parentScriptTemplate
-			scriptTemplate.parentScriptGUID = parentScriptTemplate.GetGUID()
+			scriptTemplate.parentScriptID = parentScriptTemplate.GetID()
 		endif
 
 
@@ -1659,7 +1671,8 @@ Type TDatabaseLoader
 		local role:TProgrammeRole
 
 		'fetch potential meta data
-		metaData.Add( GUID, LoadV3ProgrammeRoleMetaDataFromNode(GUID, node, xml) )
+		local mData:TData = LoadV3ProgrammeRoleMetaDataFromNode(GUID, node, xml)
+		if mData then metaData.Add(GUID, mData )
 
 		'try to fetch an existing template with the entries GUID
 		role = GetProgrammeRoleCollection().GetByGUID(GUID)
@@ -1783,7 +1796,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3ProgrammeRoleMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetProgrammeRoleCollection().GetByGUID(GUID)
 			data = LoadV3CreatorMetaDataFromNode(GUID, data, node, xml)
@@ -1793,7 +1808,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3ScriptTemplateMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper, parentScriptTemplate:TScriptTemplate = Null)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetScriptTemplateCollection().GetByGUID(GUID)
 			data = LoadV3CreatorMetaDataFromNode(GUID, data, node, xml)
@@ -1803,7 +1820,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3ProgrammeLicenceMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper, parentLicence:TProgrammeLicence = Null)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetProgrammeLicenceCollection().GetByGUID(GUID)
 			data = LoadV3CreatorMetaDataFromNode(GUID, data, node, xml)
@@ -1813,7 +1832,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3ProgrammePersonBaseMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper, isCelebrity:int=True)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetProgrammePersonBaseCollection().GetByGUID(GUID)
 			data = LoadV3CreatorMetaDataFromNode(GUID, data, node, xml)
@@ -1831,7 +1852,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3NewsEventMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetNewsEventCollection().GetByGUID(GUID)
 			data = LoadV3CreatorMetaDataFromNode(GUID, data, node, xml)
@@ -1841,7 +1864,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3AchievementElementsMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetAchievementCollection().GetAchievement(GUID) and ..
 		   not GetAchievementCollection().GetTask(GUID) and ..
@@ -1853,7 +1878,9 @@ Type TDatabaseLoader
 
 
 	Method LoadV3AdContractBaseMetaDataFromNode:TData(GUID:string, node:TxmlNode, xml:TXmlHelper)
-		local data:TData = new TData
+		local data:TData = metaData.GetData(GUID)
+		if not data then data = new TData
+
 		'only set creator if it is the "non overridden" one
 		if not GetAdContractBaseCollection().GetByGUID(GUID)
 			data = LoadV3CreatorMetaDataFromNode(GUID, data, node, xml)
@@ -1994,7 +2021,11 @@ Type TDatabaseLoader
 		local error:string
 		error :+ "ERROR~n"
 		error :+ err + "~n"
+?not bmxng
 		error :+ "File: ~q" + config.GetString("currentFileURI") + "~q  Line:" + node.getLineNumber() +" ~n"
+?bmxng
+		error :+ "File: ~q" + config.GetString("currentFileURI") + "~q~n"
+?
 		error :+ "- - - -~n"
 		error :+ node.ToString()+"~n"
 		error :+ "- - - -~n"

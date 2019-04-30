@@ -14,7 +14,7 @@ Rem
 	====================================================================
 	LICENCE
 
-	Copyright (C) 2002-2017 Ronny Otto, digidea.de
+	Copyright (C) 2002-now Ronny Otto, digidea.de
 
 	This software is provided 'as-is', without any express or
 	implied warranty. In no event will the authors be held liable
@@ -50,7 +50,9 @@ Type TGUIDropDown Extends TGUIInput
 	Field selectedEntry:TGUIObject
 	Field list:TGUISelectList
 	Field listHeight:int = 100
-	
+	Global defaultSpriteName:string = "gfx_gui_input.default"
+	Global defaultOverlaySpriteName:string = "gfx_gui_icon_arrowDown"
+
 
 
     Method Create:TGUIDropDown(position:TVec2D = null, dimension:TVec2D = null, value:string="", maxLength:Int=128, limitState:String = "")
@@ -61,9 +63,9 @@ Type TGUIDropDown Extends TGUIInput
 
 		'=== STYLE BUTTON ===
 		'use another sprite than the default button
-		spriteName = "gfx_gui_input.default"
+		if not spriteName then spriteName = defaultSpriteName
 		SetOverlayPosition("right")
-		SetOverlay("gfx_gui_icon_arrowDown")
+		SetOverlay(defaultOverlaySpriteName)
 		SetEditable(False)
 
 
@@ -87,7 +89,7 @@ Type TGUIDropDown Extends TGUIInput
 
 		'add bg to list
 		local bg:TGUIBackgroundBox = new TGUIBackgroundBox.Create(new TVec2D, new TVec2D)
-		bg.spriteBaseName = "gfx_gui_input.default"
+		bg.spriteBaseName = spriteName
 		list.SetBackground(bg)
 		'use padding from background
 		list.SetPadding(bg.GetPadding().getTop(), bg.GetPadding().getLeft(),  bg.GetPadding().getBottom(), bg.GetPadding().getRight())
@@ -255,7 +257,7 @@ Type TGUIDropDown Extends TGUIInput
 		Next
 		return -1
 	End Method
-	
+
 
 	Method GetEntries:TList()
 		return list.entries
@@ -271,6 +273,12 @@ Type TGUIDropDown Extends TGUIInput
 	Method SetOpen:Int(bool:int)
 		open = bool
 		if open
+			'update z index to be above parent's child widgets
+			if GetParent() <> self
+				if list.GetZIndex() <= GetZIndex() + 1
+					list.SetZIndex( GetZIndex() + 2)
+				endif
+			endif
 			list.Show()
 		else
 			list.Hide()
@@ -294,7 +302,7 @@ Type TGUIDropDown Extends TGUIInput
 		'update list position
 		MoveListIntoPosition()
 	End Method
-	
+
 
 	Method MoveListIntoPosition()
 		'move list to our position
@@ -380,13 +388,13 @@ Type TGUIDropDownItem Extends TGUISelectListItem
 	Method DrawBackground()
 		if not isHovered() and not isSelected() then return
 
-		
+
 		local oldCol:TColor = new TColor.Get()
 		SetAlpha oldCol.a * GetScreenAlpha()
 
 		local upperParent:TGUIObject = GetParent("TGUIListBase")
 		upperParent.RestrictContentViewPort()
-		
+
 		If isHovered()
 			SetColor 250,210,100
 			DrawRect(getScreenX(), getScreenY(), GetScreenWidth(), GetScreenHeight())

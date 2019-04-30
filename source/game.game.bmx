@@ -136,7 +136,7 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 	Method EndGame:int()
 		If Self.gamestate = TGame.STATE_RUNNING
 			'start playing the menu music again
-			GetSoundManager().PlayMusicPlaylist("menu")
+			GetSoundManagerBase().PlayMusicPlaylist("menu")
 		endif
 
 		'reset speeds (so janitor in main menu moves "normal" again)
@@ -154,7 +154,7 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 		'state (eg. when loaded)
 		GetGame().SetGamestate(TGame.STATE_RUNNING, True)
 
-		TSoundManager.GetInstance().PlayMusicPlaylist("default")
+		GetSoundManagerBase().PlayMusicPlaylist("default")
 
 
 		local currDate:int = int(Time.GetSystemTime("%m%d"))
@@ -444,6 +444,16 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 		'      zurueckgegriffen werden
 
 
+
+		'=== AI DATA ===
+		'reset temporary data of the previous AI
+		if player.aiData
+			player.aiData = new TData
+			TLogger.Log("ResetPlayer()", "Removed aiData", LOG_DEBUG)
+		endif
+
+
+
 		'=== SELL ALL PROGRAMMES ===
 		'sell forced too (so also programmed ones)
 		local lists:TList[] = [ programmeCollection.suitcaseProgrammeLicences, ..
@@ -555,11 +565,19 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 			player.SetNewsAbonnementDaysMax(i, 0)
 			player.SetNewsAbonnement(i, 0)
 		Next
+		TLogger.Log("ResetPlayer()", "Reset news abonnements", LOG_DEBUG)
 
 
-
-		'=== REMOVE DELAYED NEWS ===
+		'=== REMOVE NEWS ===
+		'delayed ones
 		GetNewsAgency().ResetDelayedList(playerID)
+		'"available" ones
+		'albeit the programmecollection gets replaced by a new one afterwards
+		'this might be useful as RemoveNews() emits events
+		For local news:TNews = EachIn programmeCollection.news.copy()
+			programmeCollection.RemoveNews(news)
+		Next
+		TLogger.Log("ResetPlayer()", "Removed news", LOG_DEBUG)
 
 
 
@@ -580,7 +598,9 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 
 		'=== RESET PRESSURE GROUP SYMPATHIES ==
 		For local pg:TPressureGroup = EachIn GetPressureGroupCollection().pressureGroups
-			pg.SetChannelSympathy(playerID, 0)
+			'use Reset instead of a simple "set" to also remove archived
+			'values
+			pg.Reset(playerID)
 		Next
 		TLogger.Log("ResetPlayer()", "Reset pressure group sympathies", LOG_DEBUG)
 
@@ -1096,6 +1116,8 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 '		GetStationMapCollection().LoadMapFromXML("res/maps/germany.xml")
 
 
+		'=== MOVIE AGENCY ===
+		TLogger.Log("Game.PrepareNewGame()", "initializing movie agency", LOG_DEBUG)
 		'create series/movies in movie agency
 		RoomHandler_MovieAgency.GetInstance().ReFillBlocks()
 
@@ -1105,6 +1127,8 @@ Type TGame Extends TGameBase {_exposeToLua="selected"}
 		Next
 
 
+		'=== NEWS AGENCY ===
+		TLogger.Log("Game.PrepareNewGame()", "initializing news agency", LOG_DEBUG)
 		'create 3 random news happened some time before today ...
 		'Limit to CurrentAffairs as this is the starting abonnement of
 		'all players

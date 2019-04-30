@@ -22,6 +22,11 @@ Type TProductionCompanyBaseCollection Extends TGameObjectCollection
 	End Method
 
 
+	Method GetByID:TProductionCompanyBase(ID:int)
+		Return TProductionCompanyBase( Super.GetByID(ID) )
+	End Method
+
+
 	Method GetRandom:TProductionCompanyBase()
 		Return TProductionCompanyBase( Super.GetRandom() )
 	End Method
@@ -39,8 +44,8 @@ End Function
 
 Type TProductionCompanyBase extends TGameObject
 	Field name:string
-	'guids of all done productions
-	Field producedProgrammes:String[]
+	'IDs of all done productions
+	Field producedProgrammeIDs:Int[]
 	Field baseQuality:Float = 0.50
 	'price manipulation. varying price but constant "quality"
 	Field priceModifier:Float = 1.0
@@ -140,7 +145,7 @@ Type TProductionCompanyBase extends TGameObject
 	End Method
 
 
-	Method GetNextExperienceGain:int(programmeDataGUID:string)
+	Method GetNextExperienceGain:int(programmeDataID:int)
 		return 0
 	End Method
 
@@ -160,9 +165,9 @@ Type TProductionCompanyBase extends TGameObject
 	End Method
 
 
-	Method FinishProduction:int(programmeDataGUID:string)
+	Method FinishProduction:int(programmeDataID:int)
 		'already added
-		if StringHelper.InArray(programmeDataGUID, producedProgrammes, False) then return False
+		if MathHelper.InIntArray(programmeDataID, producedProgrammeIDs) then return False
 
 		local oldExperience:int = GetExperience()
 		local oldLevel:int = GetLevel()
@@ -170,9 +175,9 @@ Type TProductionCompanyBase extends TGameObject
 		local oldXP:Float = GetExperiencePercentage()
 
 		'add programme
-		producedProgrammes :+ [programmeDataGUID]
+		producedProgrammeIDs :+ [programmeDataID]
 		'gain some xp
-		SetExperience(GetExperience() + GetNextExperienceGain(programmeDataGUID))
+		SetExperience(GetExperience() + GetNextExperienceGain(programmeDataID))
 		TLogger.Log("TProductionCompany", "Finish production and gained experience. Experience: "+ oldExperience +"->"+GetExperience() + "  level: " + oldLevel+"->"+GetLevel() +"  LevelXP: " + MathHelper.NumberToString(oldLevelXP*100,2)+"->"+MathHelper.NumberToString(GetLevelExperiencePercentage()*100,2)+"%" +"  XP: "+MathHelper.NumberToString(oldXP*100,2)+"->"+MathHelper.NumberToString(GetExperiencePercentage()*100,2)+"%", LOG_DEBUG)
 
 		return True
@@ -189,7 +194,7 @@ Type TProductionCompanyBase extends TGameObject
 		'up to "* 100" -> 100% xp means 2000*100 = 200000
 		xpMod :+ 100 * GetExperiencePercentage()
 
-		Return sympathyMod * priceModifier * (15000 + Floor(Int(10000 * xpMod)/100)*100)
+		Return sympathyMod * priceModifier * (20000 + Floor(Int(10000 * xpMod)/100)*100)
 	End Method
 
 

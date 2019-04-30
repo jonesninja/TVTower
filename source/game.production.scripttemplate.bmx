@@ -27,22 +27,27 @@ Type TScriptTemplateCollection Extends TGameObjectCollection
 	End Method
 
 
+	Method GetByID:TScriptTemplate(ID:int)
+		Return TScriptTemplate( Super.GetByID(ID) )
+	End Method
+
+
 	Method GetByGUID:TScriptTemplate(GUID:String)
 		Return TScriptTemplate( Super.GetByGUID(GUID) )
 	End Method
-	
+
 
 	Method SearchByPartialGUID:TScriptTemplate(GUID:String)
 		Return TScriptTemplate( Super.SearchByPartialGUID(GUID) )
 	End Method
 
-	
+
 	Method GetRandom:TScriptTemplate()
 		return TScriptTemplate(super.GetRandom())
 	End Method
 
 
-	Method GetRandomByFilter:TScriptTemplate(skipNotAvailable:int = True, skipEpisodes:int = True, containsKeywords:string="")
+	Method GetRandomByFilter:TScriptTemplate(skipNotAvailable:int = True, skipEpisodes:int = True, containsKeywords:string="", avoidIDs:int[] = null)
 		'instead of using "super.GetRandom" we use a custom variant
 		'to NOT return episodes...
 		local array:TScriptTemplate[]
@@ -64,6 +69,8 @@ Type TScriptTemplateCollection Extends TGameObjectCollection
 				Next
 				if not allKeywordsFound then continue
 			endif
+
+			if avoidIDs and MathHelper.InIntArray(obj.GetID(), avoidIDs) then continue
 
 			array :+ [obj]
 		Next
@@ -155,11 +162,11 @@ Type TScriptTemplate Extends TScriptBase
 			randomAssignedRoles = new TProgrammePersonJob[0]
 		endif
 	End Method
-	
+
 
 	Method GetParentScript:TScriptTemplate()
-		if not parentScriptGUID then return self
-		return GetScriptTemplateCollection().GetByGUID(parentScriptGUID)
+		if not parentScriptID then return self
+		return GetScriptTemplateCollection().GetByID(parentScriptID)
 	End Method
 
 
@@ -195,7 +202,7 @@ Type TScriptTemplate Extends TScriptBase
 
 		'field "available" = false ?
 		if not available then return False
-		
+
 		if availableYearRangeFrom > 0 and GetWorldTime().GetYear() < availableYearRangeFrom then return False
 		if availableYearRangeTo > 0 and GetWorldTime().GetYear() > availableYearRangeTo then return False
 
@@ -228,16 +235,16 @@ Type TScriptTemplate Extends TScriptBase
 	End Method
 
 
-	Method FinishProduction(programmeLicenceGUID:string)
+	Method FinishProduction(programmeLicenceID:int)
 		SetProductionTimes( GetProductionTimes() + 1)
 	End Method
-		
+
 
 	'set a job to the specific index
 	'the index must be existing already
 	Method SetJobAtIndex:int(index:int=0, job:TProgrammePersonJob)
 		if index < 0 or index > jobs.length -1 then return false
-		jobs[index] = job 
+		jobs[index] = job
 		return True
 	End Method
 
@@ -246,7 +253,7 @@ Type TScriptTemplate Extends TScriptBase
 	'the index must be existing already
 	Method SetRandomJobAtIndex:int(index:int=0, job:TProgrammePersonJob)
 		if index < 0 or index > randomJobs.length -1 then return false
-		randomJobs[index] = job 
+		randomJobs[index] = job
 		return True
 	End Method
 
@@ -254,7 +261,7 @@ Type TScriptTemplate Extends TScriptBase
 	Method AddJob:int(job:TProgrammePersonJob)
 		if HasJob(job) then return False
 		jobs :+ [job]
-		return True 
+		return True
 	End Method
 
 
@@ -269,14 +276,14 @@ Type TScriptTemplate Extends TScriptBase
 	Method AddRandomJob:int(job:TProgrammePersonJob)
 		if HasRandomJob(job) then return False
 		randomJobs :+ [job]
-		return True 
+		return True
 	End Method
 
 
 	Method HasRandomJob:int(job:TProgrammePersonJob)
 		For local doneJob:TProgrammePersonJob = EachIn randomJobs
-			if job.personGUID <> doneJob.personGUID then continue 
-			if job.job <> doneJob.job then continue 
+			if job.personGUID <> doneJob.personGUID then continue
+			if job.job <> doneJob.job then continue
 			if job.roleGUID <> doneJob.roleGUID then continue
 
 			return True
@@ -366,7 +373,7 @@ Type TScriptTemplate Extends TScriptBase
 
 		finalJobs = result
 		finalJobsGenerated = True
-		
+
 		return finalJobs
 	End Method
 
@@ -395,7 +402,7 @@ Type TScriptTemplate Extends TScriptBase
 		if index < 0 or index >= jobs.length then return null
 		return jobs[index]
 	End Method
-	
+
 
 	Method GetRandomJobAtIndex:TProgrammePersonJob(index:int=0)
 		if index < 0 or index >= randomJobs.length then return null
@@ -405,7 +412,7 @@ Type TScriptTemplate Extends TScriptBase
 
 	Method CreateTemplateVariables:TScriptTemplateVariables()
 		if not templateVariables then templateVariables = new TScriptTemplateVariables
-		templateVariables.SetParentGUID( self.parentScriptGUID )
+		templateVariables.SetParentID( self.parentScriptID )
 
 		return templateVariables
 	End Method
@@ -416,7 +423,7 @@ Type TScriptTemplate Extends TScriptBase
 		minValue = MathHelper.Clamp(minValue, 0.0, 1.0)
 		maxValue = MathHelper.Clamp(maxValue, 0.0, 1.0)
 	End Function
-	
+
 
 	Method SetOutcomeRange(minValue:Float, maxValue:Float=-1.0, slope:Float=0.5)
 		if maxValue = -1.0 then maxValue = minValue
@@ -535,7 +542,7 @@ Type TScriptTemplate Extends TScriptBase
 		return WeightedRandRange(blocksMin, blocksMax, blocksSlope)
 	End Method
 
-	
+
 	Method GetEpisodes:Int()
 		return WeightedRandRange(episodesMin, episodesMax, episodesSlope)
 	End Method
@@ -543,7 +550,7 @@ Type TScriptTemplate Extends TScriptBase
 
 	Method GetStudioSize:Int()
 		return WeightedRandRange(studioSizeMin, studioSizeMax, studioSizeSlope)
-	End Method	
+	End Method
 
 
 	Method GetPrice:Int()
@@ -556,14 +563,16 @@ Type TScriptTemplate Extends TScriptBase
 End Type
 
 
+
+
 Type TScriptTemplateVariables extends TTemplateVariables
-	Field parentGUID:string
-	field parent:TScriptTemplate
-	
+	Field parentID:int
+	Field parent:TScriptTemplate {nosave}
+
 
 	Method GetParentTemplateVariables:TTemplateVariables()
-		if parentGUID and not parent
-			parent = GetScriptTemplateCollection().GetByGUID(parentGUID)
+		if parentID and not parent
+			parent = GetScriptTemplateCollection().GetByID(parentID)
 		endif
 
 		if parent then return parent.templateVariables
@@ -571,8 +580,19 @@ Type TScriptTemplateVariables extends TTemplateVariables
 	End Method
 
 
-	Method SetParentGUID(g:string)
+	Method SetParent(parent:TScriptTemplate)
+		if parent
+			parentID = parent.GetID()
+			self.parent = parent
+		else
+			parentID = 0
+			self.parent = null
+		endif
+	End Method
+
+
+	Method SetParentID(id:int)
 		parent = null
-		parentGUID = g
+		parentID = id
 	End Method
 End Type

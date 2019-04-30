@@ -36,7 +36,7 @@ EndRem
 SuperStrict
 Import "base.util.virtualgraphics.bmx"
 Import "base.util.interpolation.bmx"
-Import "base.util.graphicsmanager.bmx"
+Import "base.util.graphicsmanagerbase.bmx"
 Import "base.gfx.gui.button.bmx"
 Import "base.gfx.gui.input.bmx"
 Import "base.gfx.gui.list.selectlist.bmx"
@@ -303,6 +303,12 @@ Type TGUIModalWindowChainElement Extends TGUIWindowBase
 		RemoveChild(guiBackground)
 
 		Return Self
+	End Method
+
+
+	Method GetZIndex:int() 'override
+		'be at least above parent
+		if GetParent() <> self then return Max(Super.GetZIndex(), GetParent().GetZindex() + 1)
 	End Method
 
 

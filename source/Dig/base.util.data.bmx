@@ -46,18 +46,24 @@ Type TData
 	Method Init:TData(data:TMap=null)
 		if data
 			self.data.Clear()
-			
+
 			For local k:object = EachIn data.Keys()
 				local ls:TLowerString = TLowerString(k)
 				If Not ls Then
 					ls = TLowerString.Create(String(k))
 				End If
-				
+
 				self.data.Insert(ls, data.ValueForKey(k))
 			Next
 		endif
 
 		return self
+	End Method
+
+
+	Method Clear:int()
+		if data then data.Clear()
+		return true
 	End Method
 
 
@@ -78,9 +84,19 @@ Type TData
 		'local res:string = "TData~n"
 		For local key:TLowerString = eachin data.Keys()
 			if TData(data.ValueForKey(key))
-				res.AppendObject(depthString).Append("|- ").Append(key.orig).Append(" = ").Append(TData(data.ValueForKey(key)).ToStringFormat(depth + 1))
-			else
+				res.AppendObject(depthString).Append("|- ").Append(key.orig).Append(" = ").Append(TData(data.ValueForKey(key)).ToStringFormat(depth + 1)).Append("~n")
+			elseif TData[](data.ValueForKey(key))
+				for local d:TData = EachIn TData[](data.ValueForKey(key))
+					res.AppendObject(depthString).Append("|- ").Append(key.orig).Append(" = ").Append(d.ToStringFormat(depth + 1)).Append("~n")
+				next
+			elseif object[](data.ValueForKey(key))
+				for local o:object = EachIn object[](data.ValueForKey(key))
+					res.AppendObject(depthString).Append("|- ").Append(key.orig).Append(" = ").Append(o.ToString()).Append("~n")
+				next
+			elseif data.ValueForKey(key)
 				res.AppendObject(depthString).Append("|- ").Append(key.orig).Append(" = ").Append(data.ValueForKey(key).ToString()).Append("~n")
+			else
+				res.AppendObject(depthString).Append("|- ").Append(key.orig).Append(" = NULL~n")
 			endif
 		Next
 		res.AppendObject(depthString).Append("'-------~n")
@@ -100,9 +116,9 @@ Type TData
 				dataCopy.Add(key, value)
 			endif
 		Next
-		
+
 		return dataCopy
-	End Method	
+	End Method
 
 
 	Function JoinData:int(dataSource:TData, dataTarget:TData)
@@ -177,7 +193,7 @@ Type TData
 				if TData(newValue)
 					newValue = GetDataDifference(TData(original.Get(key)), TData(newValue))
 				endif
-				
+
 				result.Add(key, newValue)
 			endif
 		Next
@@ -213,7 +229,7 @@ Type TData
 		Add( key, dd )
 		return self
 	End Method
-	
+
 
 	Method AddBoolString:TData(key:string, data:string)
 		Select data.toLower()
@@ -250,32 +266,32 @@ Type TData
 		end if
 		return data.Contains(ls)
 	End Method
-	
+
 
 	Method Get:object(k:Object, defaultValue:object=null)
 		'only react if the "::" is in the middle of something
-		
+
 		Local ls:TLowerString = TLowerString(k)
 		if ls then
 			local key:TLowerString = ls
 			local pos:int = key.Find("::")
-			
+
 			if pos > 0
 				local group:string = Left(key.orig,pos)
 				local groupData:TData = TData(Get(group))
 				if groupData
-					return groupData.Get(Right(key.orig, pos+1))
+					return groupData.Get(Right(key.orig, pos+1), defaultValue)
 				endif
 			endif
 		Else
 			Local key:String = String(k)
 			local pos:int = key.Find("::")
-			
+
 			if pos > 0
 				local group:string = Left(key,pos)
 				local groupData:TData = TData(Get(group))
 				if groupData
-					return groupData.Get(Right(key, pos+1))
+					return groupData.Get(Right(key, pos+1), defaultValue)
 				endif
 			endif
 		End if
@@ -346,7 +362,7 @@ Type TData
 			local dd:TDoubleData = TDoubleData(result)
 			if dd then
 				return Float(dd.value)
-			end if 
+			end if
 			return float( String( result ) )
 		End If
 		return defaultValue
@@ -371,11 +387,24 @@ Type TData
 	End Method
 End Type
 
+
 Type TDoubleData
 	Field value:Double
-	
+
 	Method ToString:String()
 		return String(value)
+	End Method
+
+
+	Method SerializeTDoubleDataToString:string()
+		'fits into a long? skip the ".0000" values
+		if double(long(value)) = value then return string(long(value))
+		return string(value)
+	End Method
+
+
+	Method DeSerializeTDoubleDataFromString(text:String)
+		value = double(text)
 	End Method
 End Type
 

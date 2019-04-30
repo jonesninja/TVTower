@@ -84,6 +84,11 @@ Type TProgrammeDataCollection Extends TGameObjectCollection
 	End Method
 
 
+	Method GetByID:TProgrammeData(ID:int)
+		Return TProgrammeData( Super.GetByID(ID) )
+	End Method
+
+
 	Method GetByGUID:TProgrammeData(GUID:String)
 		Return TProgrammeData( Super.GetByGUID(GUID) )
 	End Method
@@ -1218,15 +1223,15 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 	Method GetPrice:int(playerID:int)
 		Local value:int = 0
 		local priceMod:Float = GetQuality() 'this includes age-adjustments
-
+		local maxTopicality:Float = GetMaxTopicality()
 
 		'=== FRESHNESS ===
 		'this is ~1 yrs
-		If (GetMaxTopicality() >= 0.98) Then priceMod :* 1.35
+		If (maxTopicality >= 0.98) Then priceMod :* 1.35
 		'this is ~2 yrs
-		If (GetMaxTopicality() >= 0.96) Then priceMod :* 1.30
+		If (maxTopicality >= 0.96) Then priceMod :* 1.30
 		'this is ~3 yrs
-		If (GetMaxTopicality() >= 0.93) Then priceMod :* 1.25
+		If (maxTopicality >= 0.93) Then priceMod :* 1.25
 
 
 		'=== QUALITY FRESHNESS ===
@@ -1234,7 +1239,7 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 		'The older the programme gets, the less important is a high
 		'quality, they then all are relatively "equal"
 		local highQualityIndex:Float = 0.40 * GetQualityRaw() + 0.60 * GetQualityRaw() ^ 4
-		local highTopicalityIndex:Float = 0.30 * GetMaxTopicality() + 0.70 * GetMaxTopicality() ^ 4
+		local highTopicalityIndex:Float = 0.30 * maxTopicality + 0.70 * maxTopicality ^ 4
 
 		priceMod :* highTopicalityIndex * highQualityIndex
 
@@ -1277,7 +1282,6 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 
 		return value
 	End Method
-
 
 
 	Method GetPriceOld:int(playerID:int)
@@ -1341,6 +1345,7 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 		return value
 	End Method
 
+
 	'override
 	Method GetMaxTopicality:Float()
 		local res:Float = 1.0
@@ -1368,7 +1373,7 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 		'modifiers could increase or decrease influences of age/aired/...
 		local ageInfluence:Float = 1.5 * age * GetModifier("topicality::age")
 		local timesBroadcastedInfluence:Float = timesBroadcasted * GetModifier("topicality::timesBroadcasted")
-		'by default thes habe no influence but programmes like sport matches
+		'by default they have no influence but programmes like sport matches
 		'should loose a big bit of max topicality after the first time
 		'on TV. Also they should loose topicality as soon as they are
 		'no longer "live" (eg. send 1 hour later)
@@ -1441,8 +1446,10 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 
 			quality :+ add
 		EndIf
-		if quality < 0 then Notify("Quality of your programme data ~q" + GetGUID()+ "~q is negative. Please mail savegame to developers.")
-		Return Max(0, quality)
+		'if quality < 0 then Notify("Quality of your programme data ~q" + GetGUID()+ "~q is negative. Please mail savegame to developers.")
+		'FIX: 5.0 is an arbitrary value to limit values of broken savegames
+		'     can get removed 2019 or later
+		Return MathHelper.Clamp(quality, 0, 5.0)
 	End Method
 
 
@@ -1461,11 +1468,9 @@ Type TProgrammeData extends TBroadcastMaterialSource {_exposeToLua}
 		'that moment (^2 increases loss per air)
 		'but a "good movie" should benefit from being good - so the
 		'influence of repetitions gets lower by higher raw quality
-		'-> a movie with 100% base quality will have at least 25% of
+		'-> a movie with 100% base quality will have at least 10% of
 		'   quality no matter how many times it got aired
-		'-> a movie with 0% base quality will cut to up to 75% of that
-		'   resulting in <= 25% quality
-		quality :* GetQualityRaw() * (0.30 + 0.70 * GetTopicality()^2)
+		quality :* GetQualityRaw() * (0.10 + 0.90 * GetTopicality()^2)
 
 		Return MathHelper.Clamp(quality, 0.01, 1.0)
 	End Method

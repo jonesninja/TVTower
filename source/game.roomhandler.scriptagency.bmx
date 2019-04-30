@@ -24,8 +24,8 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 	Global GuiListNormal2:TGUIScriptSlotList = null
 	Global GuiListSuitcase:TGUIScriptSlotList = null
 
-	global LS_scriptagency:TLowerString = TLowerString.Create("scriptagency")	
-	
+	global LS_scriptagency:TLowerString = TLowerString.Create("scriptagency")
+
 	'configuration
 	Global suitcasePos:TVec2D = new TVec2D.Init(320,270)
 	Global suitcaseGuiListDisplace:TVec2D = new TVec2D.Init(19,32)
@@ -111,7 +111,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 			GuiListSuitcase.zIndex = 100
 		endif
 
-		
+
 		'=== EVENTS ===
 		'=== remove all registered event listeners
 		EventManager.unregisterListenersByLinks(_eventListeners)
@@ -144,7 +144,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 	Method CleanUp()
 		'=== unset cross referenced objects ===
 		'
-		
+
 		'=== remove obsolete gui elements ===
 		if GuiListSuitCase then RemoveAllGuiElements()
 
@@ -158,7 +158,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 		if GetInstance() <> self then self.CleanUp()
 		GetRoomHandlerCollection().SetHandler("scriptagency", GetInstance())
 	End Method
-	
+
 
 
 
@@ -200,7 +200,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 
 		haveToRefreshGuiElements = true
 	End Method
-	
+
 
 	'run AFTER the savegame data got loaded
 	'handle faulty adcontracts (after data got loaded)
@@ -542,7 +542,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 			'gui list
 			if scriptFound then continue
 
-			'first try to add to the guiListNormal-array, then guiListNormal2 
+			'first try to add to the guiListNormal-array, then guiListNormal2
 			if not AddScriptToVendorGuiLists(script, GuiListNormal + [GuiListNormal2])
 				TLogger.log("ScriptAgency.RefreshGuiElements_Vendor", "script exists in listNormal but does not fit in GuiListNormal or GuiListNormal2 - script removed.", LOG_ERROR)
 				RemoveScript(script)
@@ -587,7 +587,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 		Next
 		return False
 	End Function
-	
+
 
 	Method RefreshGuiElements:int()
 		RefreshGuiElements_Suitcase()
@@ -598,13 +598,40 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 	End Method
 
 
+	Method WriteNewScripts()
+		local scriptsToWrite:int = Max(0, 5 - GetScriptCollection().GetAvailableScriptList().Count())
+		if scriptsToWrite = 0 then return
+
+		local usedTemplateIDs:int[]
+		'add written but not offered
+		For local s:TScript = EachIn GetScriptCollection().GetAvailableScriptList()
+			usedTemplateIDs :+ [s.basedOnScriptTemplateID]
+		Next
+		'add check IDs at vendor
+		local lists:TScript[][] = [listNormal,listNormal2]
+		for local j:int = 0 to lists.length-1
+			for local i:int = 0 to lists[j].length-1
+				if not lists[j][i] then continue
+				usedTemplateIDs :+ [ lists[j][i].basedOnScriptTemplateID ]
+			Next
+		Next
+
+
+		for local i:int = 0 until scriptsToWrite
+			local s:TScript = GetScriptCollection().GenerateRandom(usedTemplateIDs)
+			usedTemplateIDs :+ [s.basedOnScriptTemplateID]
+		next
+	End Method
+
+
 	'refills slots in the script agency
 	'replaceOffer: remove (some) old scripts and place new there?
 	Method ReFillBlocks:Int(replaceOffer:int=FALSE, replaceChance:float=1.0)
 		local lists:TScript[][] = [listNormal,listNormal2]
-		local script:TScript = null
 
 		haveToRefreshGuiElements = TRUE
+
+		replaceChance :* 100 '0-1.0 to 0-100
 
 		'delete some random scripts
 		if replaceOffer
@@ -612,15 +639,17 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 				for local i:int = 0 to lists[j].length-1
 					if not lists[j][i] then continue
 
-					if RandRange(0,100) < replaceChance*100
+					if RandRange(0,100) < replaceChance
 						'with 30% chance the script gets trashed
 						'and a completely new one will get created
 						if RandRange(0,100) < 30
+							'print "REMOVE: " + lists[j][i].GetTitle()
 							GetScriptCollection().Remove(lists[j][i])
 						'else just give it back to the collection
 						'(reset owner)
 						else
-							GetScriptCollection().SetScriptOwner(lists[j][i], TOwnedGameObject.OWNER_NOBODY)
+							'print "GIVE BACK: " + lists[j][i].GetTitle()
+							lists[j][i].GiveBackToScriptPool()
 						endif
 						'unlink from this list
 						lists[j][i] = null
@@ -631,27 +660,35 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 
 
 		'=== ACTUALLY CREATE SCRIPTS ===
-		local usedTemplateGUIDs:string[]
-
+		'collect used templates to avoid scripts with the same base template
+		local usedTemplateIDs:int[]
 		for local j:int = 0 to lists.length-1
 			for local i:int = 0 to lists[j].length-1
-				if lists[j][i] and lists[j][i].basedOnScriptTemplateGUID
-					usedTemplateGUIDs :+ [lists[j][i].basedOnScriptTemplateGUID]
+				if lists[j][i] and lists[j][i].basedOnScriptTemplateID > 0
+					usedTemplateIDs :+ [lists[j][i].basedOnScriptTemplateID]
 				endif
+			Next
+		Next
+
+
+		'fetch and set new scripts
+		local script:TScript = null
+		for local j:int = 0 to lists.length-1
+			for local i:int = 0 to lists[j].length-1
 				'if exists and is valid...skip it
 				if lists[j][i] then continue
 
 				'get a new script - but avoid having multiple scripts
 				'of the same base template (high similarity)
-				script = GetScriptCollection().GetRandomAvailable(usedTemplateGUIDs)
+				script = GetScriptCollection().GetRandomAvailable(usedTemplateIDs)
 
 				'add new script to slot
 				if script
 					GetScriptCollection().SetScriptOwner(script, TOwnedGameObject.OWNER_VENDOR)
 					lists[j][i] = script
 
-					if script.basedOnScriptTemplateGUID
-						usedTemplateGUIDs :+ [script.basedOnScriptTemplateGUID]
+					if script.basedOnScriptTemplateID
+						usedTemplateIDs :+ [script.basedOnScriptTemplateID]
 					endif
 				endif
 			Next
@@ -671,7 +708,7 @@ Type RoomHandler_ScriptAgency extends TRoomHandler
 
 		'refresh the suitcase, not the board shelf!
 		GetInstance().RefreshGuiElements_Suitcase()
-		
+
 rem
 		'only refresh if the vendor did not get the script
 		if triggerEvent.IsTrigger("programmecollection.removeScript")
@@ -771,7 +808,7 @@ endrem
 
 		return TRUE
 	End Function
-	
+
 
 	'handle cover block drops on the vendor ... only sell if from the player
 	Function onDropScriptOnVendor:int( triggerEvent:TEventBase )
@@ -909,12 +946,33 @@ endrem
 		'SetAlpha 1.0
 		'DrawRect(GuiListSuitcase.GetScreenX(),GuiListSuitcase.GetScreenY(), GuiListSuitcase.GetScreenWidth(), GuiListSuitcase.GetScreenHeight())
 
-		
+
 		GUIManager.Draw( LS_scriptagency )
 
 		if hoveredGuiScript
 			'draw the current sheet
 			hoveredGuiScript.DrawSheet()
+		endif
+
+		if TVTDebugInfos
+			SetColor 0,0,0
+			SetAlpha 0.6
+			DrawRect(300,215, 480, 200)
+			SetAlpha 1.0
+			SetColor 255,255,255
+			GetBitmapFont("default", 12).Draw("Script Pool (refill: " + GetGameBase().refillScriptAgencyTime+")", 320, 220)
+			GetBitmapFont("default", 12).Draw("available", 320, 235)
+			GetBitmapFont("default", 12).Draw("used", 540, 235)
+			local y:int = 250
+			for local script:TScript = EachIn GetScriptCollection().GetAvailableScriptList()
+				GetBitmapFont("default", 12).Draw(script.GetTitle(), 320, y)
+				y:+ 13
+			Next
+			y = 250
+			for local script:TScript = EachIn GetScriptCollection().GetUsedScriptList()
+				GetBitmapFont("default", 12).Draw(script.GetTitle(), 540, y)
+				y:+ 13
+			Next
 		endif
 	End Method
 

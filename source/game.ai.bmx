@@ -176,13 +176,16 @@ Type TAi extends TAiBase
 	End Method
 
 
-	'eg. use this if one whispers to the AI
-	Method CallOnChat(fromID:int=0, text:String = "")
+	'use this if one talks in the chat
+	'channelType defines if "public" or "private" chat
+	Method CallOnChat(fromID:int=0, text:String = "", chatType:int = 0, channels:int = 0)
 		if not AiRunning then return
 
-		Local args:Object[2]
+		Local args:Object[4]
 		args[0] = text
 		args[1] = string(fromID)
+		args[2] = string(chatType)
+		args[3] = string(channels)
 
 		CallLuaFunction("OnChat", args)
 	End Method
@@ -960,6 +963,36 @@ endrem
 	End Method
 
 
+	Method of_getCableNetworkCount:int()
+		If Not _PlayerInRoom("office") Then Return self.RESULT_WRONGROOM
+
+		'also returns not yet launched ones!
+		return GetStationMapCollection().GetCableNetworkCount()
+	End Method
+
+
+	Method of_getCableNetworkAtIndex:TStationMap_BroadcastProvider(arrayIndex:int)
+		If Not _PlayerInRoom("office") Then Return null
+
+		return GetStationMapCollection().GetCableNetworkAtIndex(arrayIndex)
+	End Method
+
+
+	Method of_getSatelliteCount:int()
+		If Not _PlayerInRoom("office") Then Return self.RESULT_WRONGROOM
+
+		'also returns not yet launched ones!
+		return GetStationMapCollection().GetSatelliteCount()
+	End Method
+
+
+	Method of_getSatelliteAtIndex:TStationMap_BroadcastProvider(arrayIndex:int)
+		If Not _PlayerInRoom("office") Then Return null
+
+		return GetStationMapCollection().GetSatelliteAtIndex(arrayIndex)
+	End Method
+
+
 
 	'== PROGRAMME PLAN ==
 
@@ -1559,6 +1592,67 @@ endrem
 		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
 		return int(GetPlayerBoss(Self.ME).GetMood()) / 10
 	End Method
+
+
+	Method bo_GetCurrentAwardType:int()
+		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
+
+		local award:TAward = GetAwardCollection().GetCurrentAward()
+		if award then return award.awardType
+
+		return self.RESULT_NOTFOUND
+	End Method
+
+
+	Method bo_GetCurrentAwardStartTime:Long()
+		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
+
+		local award:TAward = GetAwardCollection().GetCurrentAward()
+		if award then return award.GetStartTime()
+
+		return self.RESULT_NOTFOUND
+	End Method
+
+
+	Method bo_GetCurrentAwardEndTime:Long()
+		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
+
+		local award:TAward = GetAwardCollection().GetCurrentAward()
+		if award then return award.GetEndTime()
+
+		return self.RESULT_NOTFOUND
+	End Method
+
+
+	Method bo_GetNextAwardType:int()
+		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
+
+		local award:TAward = GetAwardCollection().GetNextAward()
+		if award then return award.awardType
+
+		return self.RESULT_NOTFOUND
+	End Method
+
+
+	Method bo_GetNextAwardStartTime:Long()
+		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
+
+		local award:TAward = GetAwardCollection().GetNextAward()
+		if award then return award.GetStartTime()
+
+		return self.RESULT_NOTFOUND
+	End Method
+
+
+	Method bo_GetNextAwardEndTime:Long()
+		If Not _PlayerInRoom("boss") Then Return self.RESULT_WRONGROOM
+
+		local award:TAward = GetAwardCollection().GetNextAward()
+		if award then return award.GetEndTime()
+
+		return self.RESULT_NOTFOUND
+	End Method
+
 
 
 	'=== ROOM BOARD ===
